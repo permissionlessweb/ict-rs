@@ -1,0 +1,19 @@
+[package]
+name = "ict-rs-codegen"
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+description = "Proto-based code generation for ict-rs chain interaction traits"
+
+[dependencies]
+prost = "0.14.3"
+prost-build = "0.14.3"
+prost-types = "0.14.3"
+heck = "0.5"
+quote = "1"
+proc-macro2 = "1"
+regex = "1"
+
+[[bin]]
+name = "generate"
+path = "src/bin/generate.rs"

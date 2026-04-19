@@ -1,0 +1,148 @@
+[package]
+name = "ict-rs"
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+description = "Rust re-implementation of the Interchain Test framework"
+
+[features]
+default = ["full"]
+full = ["docker", "ethereum", "testing", "terp"]
+docker = ["dep:bollard"]
+kuasar = ["dep:tonic"]
+testing = []
+ethereum = ["dep:sha3"]
+# Chain module features
+terp = [
+    "tokenfactory",
+    "feeshare",
+    "drip",
+    "clock",
+    "hashmerchant",
+    "smartaccount",
+    "globalfee",
+]
+tokenfactory = []
+feeshare = []
+drip = []
+clock = []
+hashmerchant = []
+smartaccount = []
+globalfee = []
+akash = []
+
+[dependencies]
+async-trait = "0.1"
+futures = "0.3"
+# Async runtime
+tokio = { version = "1", features = ["full"] }
+
+# Cosmos types
+bollard = { version = "0.18", optional = true }
+cosmrs = { git = "https://github.com/permissionlessweb/cosmos-rust", branch = "zk-mvp", features = ["cosmwasm", "grpc"] }
+# Logging
+log = "0.4.22"
+prost = "0.14"
+tendermint = { git = "https://github.com/permissionlessweb/tendermint-rs", branch = "zk-mvp" }
+tendermint-rpc = { git = "https://github.com/permissionlessweb/tendermint-rs", branch = "zk-mvp", features = ["http-client"] }
+tonic = { version = "0.14", optional = true }
+
+# Serialization
+serde = { version = "1", features = ["derive"] }
+serde_json = "1"
+
+# Error handling
+anyhow = "1"
+thiserror = "2"
+
+# Crypto & keys
+bip32 = "0.5"
+bip39 = { version = "2", features = ["default"] }
+k256 = { version = "0.13", features = ["ecdsa"] }
+ripemd = "0.1"
+sha2 = "0.10"
+sha3 = { version = "0.10", optional = true }
+
+# Utilities
+bech32 = "0.11"
+hex = "0.4"
+rand = "0.8"
+toml = "0.8"
+tracing = "0.1"
+
+# Derive macros
+cw-orch-core = { git = "https://github.com/permissionlessweb/cw-orchestrator", branch = "zk-mvp", features = ["terp"] }
+ict-rs-derive = { path = "../ict-rs-derive" }
+
+[dev-dependencies]
+anyhow = "1"
+async-trait = "0.1"
+base64 = "0.22"
+bip39 = { version = "2", features = ["default"] }
+blake3 = "1"
+criterion = { version = "0.5", features = ["html_reports", "async_tokio"] }
+k256 = { version = "0.13", features = ["ecdsa"] }
+serde_json = "1"
+sha2 = "0.10"
+tempfile = "3"
+tokio = { version = "1", features = ["full"] }
+tokio-test = "0.4"
+tracing-subscriber = { version = "0.3", features = ["env-filter"] }
+
+[[bench]]
+name = "crypto_bench"
+harness = false
+
+[[bench]]
+name = "runtime_bench"
+harness = false
+
+[[example]]
+name = "basic_cosmos"
+path = "../examples/basic_cosmos.rs"
+
+[[example]]
+name = "ibc_transfer"
+path = "../examples/ibc_transfer.rs"
+
+[[example]]
+name = "ibc_transfer_e2e"
+path = "../examples/ibc_transfer_e2e.rs"
+required-features = ["docker"]
+
+[[example]]
+name = "integration_test"
+path = "../examples/integration_test.rs"
+
+[[example]]
+name = "ibc_hooks"
+path = "../examples/ibc_hooks.rs"
+
+[[example]]
+name = "hashmerchant"
+path = "../examples/hashmerchant.rs"
+required-features = ["docker", "ethereum", "hashmerchant"]
+
+[[example]]
+name = "pfm"
+path = "../examples/pfm.rs"
+
+[[example]]
+name = "polytone"
+path = "../examples/polytone.rs"
+required-features = ["docker"]
+
+[[example]]
+name = "cosmos_upgrade"
+path = "../examples/cosmos_upgrade.rs"
+required-features = ["docker"]
+
+[[example]]
+name = "no_rick"
+path = "../examples/no_rick.rs"
+required-features = ["docker"]
+
+[[example]]
+name = "headstash"
+path = "../examples/headstash.rs"
+required-features = ["docker"]

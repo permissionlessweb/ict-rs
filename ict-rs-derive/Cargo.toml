@@ -1,0 +1,15 @@
+[package]
+name = "ict-rs-derive"
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+description = "Derive macros for ict-rs (ExecuteFns, QueryFns)"
+
+[lib]
+proc-macro = true
+
+[dependencies]
+syn = { version = "2", features = ["full", "extra-traits"] }
+quote = "1"
+proc-macro2 = "1"
+heck = "0.5"
