@@ -133,6 +133,19 @@ pub trait RuntimeBackend: Send + Sync {
     /// Stop a running container.
     async fn stop_container(&self, id: &ContainerId) -> Result<()>;
 
+    /// Freeze a container using the cgroup freezer (Docker pause).
+    ///
+    /// Unlike SIGSTOP, this works on PID 1 and cannot be ignored.
+    /// All processes in the container are suspended at the kernel level —
+    /// no CPU time is scheduled, no I/O completes, no database writes land.
+    ///
+    /// Note: `exec_in_container` will fail while a container is paused.
+    /// Access data via host-side volume mounts instead.
+    async fn pause_container(&self, id: &ContainerId) -> Result<()>;
+
+    /// Resume a container previously frozen with `pause_container`.
+    async fn unpause_container(&self, id: &ContainerId) -> Result<()>;
+
     /// Remove a container and its resources.
     async fn remove_container(&self, id: &ContainerId) -> Result<()>;
 
@@ -190,5 +203,21 @@ pub trait RuntimeBackend: Send + Sync {
     ) -> Result<Option<u16>> {
         let _ = (id, container_port, protocol);
         Ok(None)
+    }
+
+    /// Copy a file or directory out of a container as a tar archive.
+    ///
+    /// Works even while the container is paused (unlike exec_in_container).
+    /// Returns the raw tar bytes of the path. The caller is responsible for
+    /// extracting the contents.
+    async fn copy_from_container(
+        &self,
+        id: &ContainerId,
+        container_path: &str,
+    ) -> Result<Vec<u8>> {
+        let _ = (id, container_path);
+        Err(crate::error::IctError::Runtime(anyhow::anyhow!(
+            "copy_from_container not supported by this backend"
+        )))
     }
 }

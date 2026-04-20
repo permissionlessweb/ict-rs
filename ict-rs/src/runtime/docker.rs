@@ -208,6 +208,18 @@ impl RuntimeBackend for DockerBackend {
         Ok(())
     }
 
+    async fn pause_container(&self, id: &ContainerId) -> Result<()> {
+        self.client.pause_container(&id.0).await?;
+        info!(container_id = %id.0, "Container paused (cgroup freeze)");
+        Ok(())
+    }
+
+    async fn unpause_container(&self, id: &ContainerId) -> Result<()> {
+        self.client.unpause_container(&id.0).await?;
+        info!(container_id = %id.0, "Container unpaused");
+        Ok(())
+    }
+
     async fn remove_container(&self, id: &ContainerId) -> Result<()> {
         let opts = RemoveContainerOptions {
             force: true,
@@ -500,6 +512,36 @@ impl RuntimeBackend for DockerBackend {
         self.client.remove_volume(name, None).await?;
         info!(volume = %name, "Volume removed");
         Ok(())
+    }
+
+    async fn copy_from_container(
+        &self,
+        id: &ContainerId,
+        container_path: &str,
+    ) -> Result<Vec<u8>> {
+        use bollard::container::DownloadFromContainerOptions;
+
+        let opts = DownloadFromContainerOptions {
+            path: container_path,
+        };
+
+        let mut stream = self.client.download_from_container(&id.0, Some(opts));
+        let mut tar_bytes = Vec::new();
+
+        while let Some(result) = stream.next().await {
+            match result {
+                Ok(chunk) => tar_bytes.extend_from_slice(&chunk),
+                Err(e) => return Err(IctError::Docker(e)),
+            }
+        }
+
+        info!(
+            container_id = %id.0,
+            path = %container_path,
+            size_bytes = tar_bytes.len(),
+            "Copied from container"
+        );
+        Ok(tar_bytes)
     }
 
     async fn get_host_port(

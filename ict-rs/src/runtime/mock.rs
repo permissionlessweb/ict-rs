@@ -21,6 +21,7 @@ use crate::tx::ExecOutput;
 pub enum MockContainerStatus {
     Created,
     Running,
+    Paused,
     Stopped,
     Removed,
 }
@@ -151,6 +152,24 @@ impl RuntimeBackend for MockRuntime {
             IctError::Runtime(anyhow::anyhow!("container not found: {}", id.0))
         })?;
         container.status = MockContainerStatus::Stopped;
+        Ok(())
+    }
+
+    async fn pause_container(&self, id: &ContainerId) -> Result<()> {
+        let mut state = self.state.lock().unwrap();
+        let container = state.containers.get_mut(&id.0).ok_or_else(|| {
+            IctError::Runtime(anyhow::anyhow!("container not found: {}", id.0))
+        })?;
+        container.status = MockContainerStatus::Paused;
+        Ok(())
+    }
+
+    async fn unpause_container(&self, id: &ContainerId) -> Result<()> {
+        let mut state = self.state.lock().unwrap();
+        let container = state.containers.get_mut(&id.0).ok_or_else(|| {
+            IctError::Runtime(anyhow::anyhow!("container not found: {}", id.0))
+        })?;
+        container.status = MockContainerStatus::Running;
         Ok(())
     }
 

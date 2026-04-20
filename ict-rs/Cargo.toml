@@ -39,12 +39,12 @@ tokio = { version = "1", features = ["full"] }
 
 # Cosmos types
 bollard = { version = "0.18", optional = true }
-cosmrs = { git = "https://github.com/permissionlessweb/cosmos-rust", branch = "zk-mvp", features = ["cosmwasm", "grpc"] }
+cosmrs = { path = "../../cosmos-rust/cosmrs", features = ["cosmwasm", "grpc"] }
 # Logging
 log = "0.4.22"
 prost = "0.14"
-tendermint = { git = "https://github.com/permissionlessweb/tendermint-rs", branch = "zk-mvp" }
-tendermint-rpc = { git = "https://github.com/permissionlessweb/tendermint-rs", branch = "zk-mvp", features = ["http-client"] }
+tendermint = { path = "../../tendermint-rs/tendermint" }
+tendermint-rpc = { path = "../../tendermint-rs/rpc", features = ["http-client"] }
 tonic = { version = "0.14", optional = true }
 
 # Serialization
@@ -71,7 +71,7 @@ toml = "0.8"
 tracing = "0.1"
 
 # Derive macros
-cw-orch-core = { git = "https://github.com/permissionlessweb/cw-orchestrator", branch = "zk-mvp", features = ["terp"] }
+cw-orch-core = { path = "../../cw-orchestrator/packages/cw-orch-core", features = ["terp"] }
 ict-rs-derive = { path = "../ict-rs-derive" }
 
 [dev-dependencies]
@@ -84,7 +84,9 @@ criterion = { version = "0.5", features = ["html_reports", "async_tokio"] }
 k256 = { version = "0.13", features = ["ecdsa"] }
 serde_json = "1"
 sha2 = "0.10"
+tar = "0.4"
 tempfile = "3"
+terp-rs = { path = "../../terp-rs/proto", features = ["rpc"] }
 tokio = { version = "1", features = ["full"] }
 tokio-test = "0.4"
 tracing-subscriber = { version = "0.3", features = ["env-filter"] }
@@ -145,4 +147,24 @@ required-features = ["docker"]
 [[example]]
 name = "headstash"
 path = "../examples/headstash.rs"
+required-features = ["docker"]
+
+[[example]]
+name = "state_sync"
+path = "../examples/state_sync.rs"
+required-features = ["docker"]
+
+[[example]]
+name = "bootstrap_mainnet"
+path = "../examples/bootstrap_mainnet.rs"
+required-features = ["docker"]
+
+[[example]]
+name = "loyalty_rewards"
+path = "../examples/loyalty_rewards.rs"
+required-features = ["docker", "hashmerchant"]
+
+[[example]]
+name = "snapshot"
+path = "../examples/snapshot.rs"
 required-features = ["docker"]
