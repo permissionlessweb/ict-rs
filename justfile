@@ -42,3 +42,12 @@ example name:
 # Run benchmarks
 bench:
     cargo bench -p {{pkg}} --features {{mock_features}}
+
+# --- Contract wasm builds (via cosmwasm/optimizer) ---
+
+terp_core_dir := env("TERP_CORE_DIR", home_directory() / "abstract/terp-core")
+loyalty_verifier_dir := terp_core_dir / "tests/tsh/hashmerchant/contracts/loyalty-verifier"
+
+# Build loyalty-verifier contract wasm via optimizer and copy to interchaintest/contracts/
+wasm:
+    cd "{{loyalty_verifier_dir}}" && just wasm

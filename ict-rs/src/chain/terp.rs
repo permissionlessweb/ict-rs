@@ -140,6 +140,14 @@ pub trait Circuit: Send + Sync {
 
     /// Deserialise a verifying key from raw bytes (e.g. read back from disk).
     fn vk_from_bytes(bytes: &[u8]) -> std::result::Result<Self::VerifyingKey, ZkSuiteError>;
+
+    /// Validate that the verifying-key bytes start with the expected magic
+    /// header for the `zk-wasmvm` host.  Return `Err` to reject.
+    fn validate_vk_header(vk_bytes: &[u8]) -> std::result::Result<(), ZkSuiteError>;
+
+    /// Validate that the verifying-key bytes end with the expected magic
+    /// footer for the `zk-wasmvm` host.  Return `Err` to reject.
+    fn validate_vk_footer(vk_bytes: &[u8]) -> std::result::Result<(), ZkSuiteError>;
 }
 
 // ─── Contract ────────────────────────────────────────────────────────────────
@@ -154,14 +162,6 @@ pub trait Contract: Send + Sync {
 
     /// Raw WASM bytes of the compiled contract (via `include_bytes!`).
     fn wasm_byte_code() -> &'static [u8];
-
-    /// Validate that the verifying-key bytes start with the expected magic
-    /// header for the `zk-wasmvm` host.  Return `Err` to reject.
-    fn validate_vk_header(vk_bytes: &[u8]) -> std::result::Result<(), ZkSuiteError>;
-
-    /// Validate that the verifying-key bytes end with the expected magic
-    /// footer for the `zk-wasmvm` host.  Return `Err` to reject.
-    fn validate_vk_footer(vk_bytes: &[u8]) -> std::result::Result<(), ZkSuiteError>;
 }
 
 // ─── DeployedContract ────────────────────────────────────────────────────────

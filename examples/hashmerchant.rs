@@ -374,15 +374,10 @@ async fn run_test(
     anvil.initialize(&ctx).await?;
     anvil.start(&[]).await?;
     println!("    Anvil ready at block {}", anvil.height().await?);
-
-    // ---------------------------------------------------------------
-    // 3. Deploy ERC20 + transfer (create state changes)
-    // ---------------------------------------------------------------
     println!("\n[3] Deploying ERC20 and executing transfer...");
     let acct0 = anvil.accounts()[0].clone();
     let acct1 = anvil.accounts()[1].clone();
     let rpc_url = "http://localhost:8545";
-
     let sol_source = concat!(
         "// SPDX-License-Identifier: MIT\n",
         "pragma solidity ^0.8.20;\n",
@@ -457,6 +452,7 @@ async fn run_test(
 
     let config_dir = tempfile::tempdir()?;
     let config_path = config_dir.path().join("config.toml");
+    // TODO: add this into terp-core cmd
     std::fs::write(&config_path, format!(
         r#"bind = "0.0.0.0:{http_port}"
 chain_id = "{terp_chain_id}"

@@ -107,7 +107,9 @@ fn mock_exec_response(cmd: &[&str]) -> ExecOutput {
         let joined = parts.join(" ");
         if joined.contains("keys add") && joined.contains("--recover") {
             return ExecOutput {
-                stdout: br#"{"name":"recovered","address":"cosmos1mockrecovered000000000000000000"}"#.to_vec(),
+                stdout:
+                    br#"{"name":"recovered","address":"cosmos1mockrecovered000000000000000000"}"#
+                        .to_vec(),
                 stderr: Vec::new(),
                 exit_code: 0,
             };
@@ -380,6 +382,22 @@ impl RuntimeBackend for MockRuntime {
     ) -> Result<()> {
         Ok(())
     }
+
+    async fn pause_container(&self, id: &ContainerId) -> Result<()> {
+        let mut state = self.state.lock().unwrap();
+        if let Some(status) = state.containers.get_mut(&id.0) {
+            *status = "paused".to_string();
+        }
+        Ok(())
+    }
+
+    async fn unpause_container(&self, id: &ContainerId) -> Result<()> {
+        let mut state = self.state.lock().unwrap();
+        if let Some(status) = state.containers.get_mut(&id.0) {
+            *status = "running".to_string();
+        }
+        Ok(())
+    }
 }
 
 // ---------------------------------------------------------------------------
@@ -418,12 +436,7 @@ impl Relayer for MockRelayer {
         }))
     }
 
-    async fn restore_key(
-        &self,
-        chain_id: &str,
-        key_name: &str,
-        _mnemonic: &str,
-    ) -> Result<()> {
+    async fn restore_key(&self, chain_id: &str, key_name: &str, _mnemonic: &str) -> Result<()> {
         self.record(&format!("restore_key({chain_id}, {key_name})"));
         Ok(())
     }
@@ -574,7 +587,11 @@ async fn test_single_chain_lifecycle() {
     chain.initialize(&ctx).await.unwrap();
 
     // A network should have been created.
-    assert_eq!(runtime.network_count(), 1, "one network should exist after init");
+    assert_eq!(
+        runtime.network_count(),
+        1,
+        "one network should exist after init"
+    );
     // One validator container.
     assert!(
         runtime.container_count() >= 1,
@@ -884,7 +901,10 @@ async fn test_multichain_ibc_workflow() {
         calls_after.iter().any(|c| c == "stop()"),
         "relayer should have been stopped on close"
     );
-    assert!(!ic.is_built(), "interchain should no longer be built after close");
+    assert!(
+        !ic.is_built(),
+        "interchain should no longer be built after close"
+    );
 }
 
 // ===========================================================================
@@ -995,11 +1015,9 @@ async fn test_genesis_modification_pipeline() {
     )
     .unwrap();
 
-    let bond_denom = get_genesis_module_value(
-        &genesis,
-        &["app_state", "staking", "params", "bond_denom"],
-    )
-    .unwrap();
+    let bond_denom =
+        get_genesis_module_value(&genesis, &["app_state", "staking", "params", "bond_denom"])
+            .unwrap();
     assert_eq!(bond_denom, "uterp");
 
     // --- Modify nested value: max_validators ---
@@ -1025,11 +1043,9 @@ async fn test_genesis_modification_pipeline() {
     )
     .unwrap();
 
-    let voting_period = get_genesis_module_value(
-        &genesis,
-        &["app_state", "gov", "params", "voting_period"],
-    )
-    .unwrap();
+    let voting_period =
+        get_genesis_module_value(&genesis, &["app_state", "gov", "params", "voting_period"])
+            .unwrap();
     assert_eq!(voting_period, "60s");
 
     // --- Verify original values not clobbered ---
@@ -1050,7 +1066,10 @@ async fn test_genesis_modification_pipeline() {
         &["app_state", "nonexistent_module", "params", "key"],
         serde_json::json!("value"),
     );
-    assert!(result.is_err(), "setting through missing intermediate should fail");
+    assert!(
+        result.is_err(),
+        "setting through missing intermediate should fail"
+    );
 }
 
 // ===========================================================================
@@ -1079,10 +1098,7 @@ async fn test_fund_test_users_workflow() {
         amount: 1_000_000,
     };
     let tx_hash = chain.send_funds("validator-0", &amount).await.unwrap();
-    assert!(
-        !tx_hash.is_empty(),
-        "send_funds should return a tx hash"
-    );
+    assert!(!tx_hash.is_empty(), "send_funds should return a tx hash");
     assert_eq!(tx_hash, "AABBCCDD1234567890");
 
     // Query balance.
@@ -1105,7 +1121,10 @@ async fn test_fund_test_users_workflow() {
     // Verify the exec log contains bank send commands for both users.
     let log = runtime.exec_log();
     let flat: Vec<String> = log.iter().map(|v| v.join(" ")).collect();
-    let send_cmds: Vec<&String> = flat.iter().filter(|c| c.contains("bank") && c.contains("send")).collect();
+    let send_cmds: Vec<&String> = flat
+        .iter()
+        .filter(|c| c.contains("bank") && c.contains("send"))
+        .collect();
     assert!(
         send_cmds.len() >= 2,
         "should have at least 2 bank send commands, got {}",
@@ -1156,8 +1175,7 @@ async fn test_chain_node_exec_commands() {
     // --- create_key ---
     let out = node.create_key("mykey", 118).await.unwrap();
     assert_eq!(out.exit_code, 0);
-    let key_json: serde_json::Value =
-        serde_json::from_str(out.stdout_str().trim()).unwrap();
+    let key_json: serde_json::Value = serde_json::from_str(out.stdout_str().trim()).unwrap();
     assert_eq!(key_json["name"], "mykey");
 
     // --- get_key_address ---
@@ -1180,7 +1198,10 @@ async fn test_chain_node_exec_commands() {
     assert_eq!(out.exit_code, 0);
 
     // --- gentx ---
-    let out = node.gentx("validator-0", "50000000uatom", "0.025uatom", 1.5).await.unwrap();
+    let out = node
+        .gentx("validator-0", "50000000uatom", "0.025uatom", 1.5)
+        .await
+        .unwrap();
     assert_eq!(out.exit_code, 0);
 
     // --- collect_gentxs ---
@@ -1188,7 +1209,10 @@ async fn test_chain_node_exec_commands() {
     assert_eq!(out.exit_code, 0);
 
     // --- query_balance ---
-    let bal = node.query_balance("cosmos1someaddr", "uatom").await.unwrap();
+    let bal = node
+        .query_balance("cosmos1someaddr", "uatom")
+        .await
+        .unwrap();
     assert_eq!(bal, 1_000_000);
 
     // --- query_height ---
@@ -1225,14 +1249,28 @@ async fn test_chain_node_exec_commands() {
     let log = runtime.exec_log();
     let flat: Vec<String> = log.iter().map(|v| v.join(" ")).collect();
 
-    assert!(flat.iter().any(|c| c.contains("init") && c.contains("test-moniker")));
-    assert!(flat.iter().any(|c| c.contains("keys") && c.contains("add") && c.contains("mykey")));
-    assert!(flat.iter().any(|c| c.contains("add-genesis-account") && c.contains("cosmos1someaddr")));
-    assert!(flat.iter().any(|c| c.contains("gentx") && c.contains("validator-0")));
+    assert!(flat
+        .iter()
+        .any(|c| c.contains("init") && c.contains("test-moniker")));
+    assert!(flat
+        .iter()
+        .any(|c| c.contains("keys") && c.contains("add") && c.contains("mykey")));
+    assert!(flat
+        .iter()
+        .any(|c| c.contains("add-genesis-account") && c.contains("cosmos1someaddr")));
+    assert!(flat
+        .iter()
+        .any(|c| c.contains("gentx") && c.contains("validator-0")));
     assert!(flat.iter().any(|c| c.contains("collect-gentxs")));
-    assert!(flat.iter().any(|c| c.contains("bank") && c.contains("send")));
-    assert!(flat.iter().any(|c| c.contains("ibc-transfer") && c.contains("channel-0")));
-    assert!(flat.iter().any(|c| c.contains("export") && c.contains("100")));
+    assert!(flat
+        .iter()
+        .any(|c| c.contains("bank") && c.contains("send")));
+    assert!(flat
+        .iter()
+        .any(|c| c.contains("ibc-transfer") && c.contains("channel-0")));
+    assert!(flat
+        .iter()
+        .any(|c| c.contains("export") && c.contains("100")));
 
     // --- Stop and remove ---
     node.stop_container().await.unwrap();
@@ -1254,7 +1292,11 @@ async fn test_reporter_tracking() {
     // Record some reports.
     reporter.record(ExecReport {
         container_name: "ict-gaia-val-0".to_string(),
-        command: vec!["gaiad".to_string(), "init".to_string(), "moniker".to_string()],
+        command: vec![
+            "gaiad".to_string(),
+            "init".to_string(),
+            "moniker".to_string(),
+        ],
         stdout: "{}".to_string(),
         stderr: String::new(),
         exit_code: 0,

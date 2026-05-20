@@ -66,12 +66,71 @@ pub trait CosmWasmExt: Chain {
         let v: serde_json::Value = serde_json::from_str(json_str.trim())
             .map_err(|e| IctError::Config(format!("invalid instantiate JSON: {e}")))?;
 
-        let contract_addr = v["contract_address"]
-            .as_str()
-            .unwrap_or("terp1mockcontract")
-            .to_string();
+        // Try top-level contract_address first (mock runtime)
+        if let Some(addr) = v["contract_address"].as_str() {
+            if addr != "terp1mockcontract" {
+                return Ok(addr.to_string());
+            }
+        }
 
-        Ok(contract_addr)
+        // For real chains: get txhash, wait for inclusion, query tx, parse from events
+        let txhash = v["txhash"]
+            .as_str()
+            .ok_or_else(|| IctError::Config("no txhash in instantiate response".into()))?;
+
+        // Wait for tx to be included in a block
+        tokio::time::sleep(std::time::Duration::from_secs(3)).await;
+
+        let tx_output = self
+            .chain_exec(&[
+                "query", "tx", txhash, "--output", "json",
+            ])
+            .await?;
+        let tx_json: serde_json::Value =
+            serde_json::from_str(tx_output.stdout_str().trim())
+                .map_err(|e| IctError::Config(format!("invalid query tx JSON: {e}")))?;
+
+        // Parse _contract_address from events
+        if let Some(events) = tx_json["events"].as_array() {
+            for event in events {
+                if event["type"].as_str() == Some("instantiate") {
+                    if let Some(attrs) = event["attributes"].as_array() {
+                        for attr in attrs {
+                            if attr["key"].as_str() == Some("_contract_address") {
+                                if let Some(addr) = attr["value"].as_str() {
+                                    return Ok(addr.to_string());
+                                }
+                            }
+                        }
+                    }
+                }
+            }
+        }
+
+        // Fallback: check logs[].events[] (older SDK format)
+        if let Some(logs) = tx_json["logs"].as_array() {
+            for log in logs {
+                if let Some(events) = log["events"].as_array() {
+                    for event in events {
+                        if event["type"].as_str() == Some("instantiate") {
+                            if let Some(attrs) = event["attributes"].as_array() {
+                                for attr in attrs {
+                                    if attr["key"].as_str() == Some("_contract_address") {
+                                        if let Some(addr) = attr["value"].as_str() {
+                                            return Ok(addr.to_string());
+                                        }
+                                    }
+                                }
+                            }
+                        }
+                    }
+                }
+            }
+        }
+
+        Err(IctError::Config(format!(
+            "contract address not found in tx {txhash} events"
+        )))
     }
 
     /// Execute a message on a contract. Returns the transaction result.

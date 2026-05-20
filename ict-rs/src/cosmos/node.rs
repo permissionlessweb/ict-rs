@@ -861,6 +861,147 @@ impl ChainNode {
         })?;
         self.write_file(&content, container_path).await
     }
+
+    /// Query the full CometBFT status as JSON.
+    ///
+    /// Includes `sync_info.catching_up`, `sync_info.latest_block_height`,
+    /// `sync_info.earliest_block_height`, etc.
+    pub async fn query_status_json(&self) -> Result<serde_json::Value> {
+        let output = self
+            .exec_cmd(&["status", "--output", "json"])
+            .await?;
+        let stdout = output.stdout_str();
+        let trimmed = stdout.trim();
+        serde_json::from_str(trimmed).map_err(|e| IctError::Chain {
+            chain_id: self.chain_id.clone(),
+            source: anyhow::anyhow!("failed to parse status JSON: {e}\nstdout: {trimmed}"),
+        })
+    }
+
+    /// Query the block hash at a specific height via CometBFT RPC.
+    ///
+    /// Uses `wget` (available in Alpine-based images where `curl` may not be)
+    /// to query the node's local RPC endpoint.
+    pub async fn query_block_hash(&self, height: u64) -> Result<String> {
+        let url = format!(
+            "http://localhost:{}/block?height={}",
+            self.ports.rpc, height
+        );
+        let cmd = format!("wget -qO- '{}'", url);
+        let output = self.exec_raw(&["sh", "-c", &cmd], &[]).await?;
+        let stdout = output.stdout_str();
+        let trimmed = stdout.trim();
+
+        if trimmed.is_empty() || output.exit_code != 0 {
+            return Err(IctError::Chain {
+                chain_id: self.chain_id.clone(),
+                source: anyhow::anyhow!(
+                    "failed to fetch block at height {height}: exit={} stderr={}",
+                    output.exit_code,
+                    output.stderr_str()
+                ),
+            });
+        }
+
+        let json: serde_json::Value = serde_json::from_str(trimmed).map_err(|e| {
+            IctError::Chain {
+                chain_id: self.chain_id.clone(),
+                source: anyhow::anyhow!("failed to parse block JSON: {e}\nstdout: {trimmed}"),
+            }
+        })?;
+
+        // CometBFT RPC format: result.block_id.hash
+        let hash = json["result"]["block_id"]["hash"]
+            .as_str()
+            .unwrap_or("");
+
+        if hash.is_empty() {
+            return Err(IctError::Chain {
+                chain_id: self.chain_id.clone(),
+                source: anyhow::anyhow!(
+                    "block_id.hash not found in RPC response at height {height}"
+                ),
+            });
+        }
+
+        Ok(hash.to_string())
+    }
+
+    /// Check if the node is still catching up (CometBFT `sync_info.catching_up`).
+    pub async fn is_catching_up(&self) -> Result<bool> {
+        let status = self.query_status_json().await?;
+        // Handle both CometBFT JSON key styles
+        let catching_up = status["sync_info"]["catching_up"]
+            .as_bool()
+            .or_else(|| status["SyncInfo"]["catching_up"].as_bool())
+            .unwrap_or(true);
+        Ok(catching_up)
+    }
+
+    /// Wipe the data directory (preserving config). Used before state sync restart.
+    ///
+    /// Backs up `priv_validator_state.json` before wiping and restores it
+    /// afterwards — CometBFT requires this file to start.
+    ///
+    /// The container must be running (idle entrypoint) for exec to work.
+    pub async fn wipe_data(&self) -> Result<()> {
+        let data_dir = format!("{}/data", self.home_dir);
+        let pvs = format!("{}/priv_validator_state.json", data_dir);
+        let backup = format!("{}/priv_validator_state.json.bak", self.home_dir);
+        let cmd = format!(
+            "cp {pvs} {backup} && rm -rf {data_dir} && mkdir -p {data_dir} && mv {backup} {pvs}",
+        );
+        let output = self.exec_raw(&["sh", "-c", &cmd], &[]).await?;
+        if output.exit_code != 0 {
+            return Err(IctError::ExecFailed {
+                exit_code: output.exit_code,
+                stderr: output.stderr_str(),
+            });
+        }
+        debug!(node = %self.hostname, "Wiped data directory (preserved priv_validator_state.json)");
+        Ok(())
+    }
+
+    /// Apply TOML config overrides to a specific file on this node.
+    ///
+    /// Reads the existing TOML file, deep-merges the JSON overrides into it,
+    /// and writes it back. Reuses the same merge logic as `CosmosChain::apply_config_overrides`.
+    pub async fn apply_config_override(
+        &self,
+        file_path: &str,
+        overrides: &serde_json::Value,
+    ) -> Result<()> {
+        let abs_path = if file_path.starts_with('/') {
+            file_path.to_string()
+        } else {
+            format!("{}/{}", self.home_dir, file_path)
+        };
+
+        // Read existing TOML
+        let output = self.exec_raw(&["cat", &abs_path], &[]).await?;
+        let existing = String::from_utf8_lossy(&output.stdout).to_string();
+
+        // Parse into mutable table
+        let mut table: toml::Table = toml::from_str(&existing).map_err(|e| {
+            IctError::Config(format!("failed to parse {}: {}", abs_path, e))
+        })?;
+
+        // Deep-merge
+        crate::chain::cosmos::merge_json_into_toml(&mut table, overrides);
+
+        // Serialize back
+        let new_toml = toml::to_string_pretty(&table).map_err(|e| {
+            IctError::Config(format!("failed to serialize {}: {}", abs_path, e))
+        })?;
+
+        // Write back via base64 to handle special chars
+        let encoded = crate::chain::cosmos::base64_encode(new_toml.as_bytes());
+        let write_cmd = format!("echo '{}' | base64 -d > {}", encoded, abs_path);
+        self.exec_raw(&["sh", "-c", &write_cmd], &[]).await?;
+
+        debug!(node = %self.hostname, file = %file_path, "Applied config override");
+        Ok(())
+    }
 }
 
 /// Base64 encode bytes (standard alphabet, with padding).

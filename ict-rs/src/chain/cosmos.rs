@@ -86,6 +86,16 @@ impl CosmosChain {
         &self.full_nodes
     }
 
+    /// Get mutable access to full nodes (for state sync reconfiguration).
+    pub fn full_nodes_mut(&mut self) -> &mut [ChainNode] {
+        &mut self.full_nodes
+    }
+
+    /// Get mutable access to validators.
+    pub fn validators_mut(&mut self) -> &mut [ChainNode] {
+        &mut self.validators
+    }
+
     /// Create node objects (does not start containers).
     fn create_nodes(&mut self) {
         let image = self.cfg.images.first().cloned().unwrap_or_else(|| {
@@ -884,7 +894,7 @@ impl CosmosChain {
 ///
 /// Mirrors Go ICT's `RecursiveModifyToml`: nested objects are merged
 /// recursively, leaf values are overwritten.
-fn merge_json_into_toml(table: &mut toml::Table, json: &serde_json::Value) {
+pub(crate) fn merge_json_into_toml(table: &mut toml::Table, json: &serde_json::Value) {
     if let serde_json::Value::Object(map) = json {
         for (key, value) in map {
             match value {
@@ -909,7 +919,7 @@ fn merge_json_into_toml(table: &mut toml::Table, json: &serde_json::Value) {
 }
 
 /// Convert a leaf `serde_json::Value` to a `toml::Value`.
-fn json_value_to_toml(v: &serde_json::Value) -> Option<toml::Value> {
+pub(crate) fn json_value_to_toml(v: &serde_json::Value) -> Option<toml::Value> {
     match v {
         serde_json::Value::Bool(b) => Some(toml::Value::Boolean(*b)),
         serde_json::Value::Number(n) => {
@@ -936,7 +946,7 @@ fn json_value_to_toml(v: &serde_json::Value) -> Option<toml::Value> {
 }
 
 /// Simple base64 encoding without pulling in another crate.
-fn base64_encode(data: &[u8]) -> String {
+pub(crate) fn base64_encode(data: &[u8]) -> String {
     use std::fmt::Write;
     const CHARS: &[u8] = b"ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789+/";
     let mut result = String::with_capacity((data.len() + 2) / 3 * 4);
