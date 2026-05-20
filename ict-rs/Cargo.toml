@@ -30,12 +30,15 @@ hashmerchant = []
 smartaccount = []
 globalfee = []
 akash = []
+nostr = ["dep:tokio-tungstenite"]
 
 [dependencies]
 async-trait = "0.1"
 futures = "0.3"
 tokio = { version = "1", features = ["full"] }
 bollard = { version = "0.18", optional = true }
+# For Nostr NIP-01 WS client (local relay testing)
+tokio-tungstenite = { version = "0.21", features = ["connect"], optional = true }
 cosmrs = { path = "../../cosmos-rust/cosmrs", features = ["cosmwasm", "grpc"] }
 log = "0.4.22"
 prost = "0.14"

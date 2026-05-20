@@ -54,6 +54,9 @@ pub mod sidecar;
 pub mod spec;
 pub mod wallet;
 
+#[cfg(feature = "nostr")]
+pub mod nostr;
+
 // Re-export cosmos submodules at the crate root so existing `crate::node`,
 // `crate::tx`, `crate::ibc`, etc. paths continue to work.
 pub use cosmos::cosmwasm;
