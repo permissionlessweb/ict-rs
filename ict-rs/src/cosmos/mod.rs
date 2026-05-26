@@ -1,5 +1,6 @@
 pub mod cosmwasm;
 pub mod docker_sidecar;
+pub mod event_watcher;
 pub mod genesis;
 pub mod governance;
 pub mod ibc;

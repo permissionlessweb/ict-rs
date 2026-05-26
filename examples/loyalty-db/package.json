@@ -1,0 +1,8 @@
+{
+  "name": "loyalty-db-seeder",
+  "private": true,
+  "type": "module",
+  "dependencies": {
+    "pg": "^8.0.0"
+  }
+}

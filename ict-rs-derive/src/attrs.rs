@@ -83,7 +83,7 @@ impl VariantAttrs {
 }
 
 /// Parse `#[returns(Type)]` from variant attributes.
-pub fn parse_returns_attr(attrs: &[Attribute]) -> Option<syn::Type> {
+pub fn _parse_returns_attr(attrs: &[Attribute]) -> Option<syn::Type> {
     for attr in attrs {
         if !attr.path().is_ident("returns") {
             continue;

@@ -6,8 +6,8 @@ rust-version.workspace = true
 description = "Bridge between ict-rs and cw-orchestrator: spawn local chains via ict-rs, interact via cw-orch Daemon"
 
 [dependencies]
-cw-orch-core = { git = "https://github.com/permissionlessweb/cw-orchestrator", branch = "zk-mvp" }
-cw-orch-daemon = { git = "https://github.com/permissionlessweb/cw-orchestrator", branch = "zk-mvp" }
+cw-orch-core = { path = "../../cw-orchestrator/packages/cw-orch-core" }
+cw-orch-daemon = { path = "../../cw-orchestrator/cw-orch-daemon" }
 ict-rs = { path = "../ict-rs", features = ["docker"] }
 
 thiserror = "2"

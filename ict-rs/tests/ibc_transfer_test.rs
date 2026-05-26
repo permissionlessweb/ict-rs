@@ -11,7 +11,7 @@
 use std::sync::Arc;
 
 use ict_rs::chain::cosmos::CosmosChain;
-use ict_rs::chain::{Chain, ChainConfig, ChainType, SigningAlgorithm};
+use ict_rs::chain::{ChainConfig, ChainType, SigningAlgorithm};
 use ict_rs::interchain::{Interchain, InterchainBuildOptions, InterchainLink};
 use ict_rs::relayer::{build_relayer, RelayerType};
 use ict_rs::runtime::{DockerConfig, DockerImage};
@@ -92,7 +92,7 @@ async fn test_ibc_transfer_cosmos_to_cosmos() {
 
     // Get chain references
     let chain_a = ic.get_chain("chain-a").unwrap();
-    let chain_b = ic.get_chain("chain-b").unwrap();
+    // let chain_b = ic.get_chain("chain-b").unwrap();
 
     // Send IBC transfer from chain A → chain B
     let transfer_amount = WalletAmount {

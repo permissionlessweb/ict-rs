@@ -7,7 +7,7 @@ description = "Rust re-implementation of the Interchain Test framework"
 
 [features]
 default = ["full"]
-full = ["docker", "ethereum", "testing", "terp"]
+full = ["docker", "ethereum", "testing", "terp", "akash"]
 docker = ["dep:bollard"]
 kuasar = ["dep:tonic"]
 testing = []
@@ -30,20 +30,22 @@ hashmerchant = []
 smartaccount = []
 globalfee = []
 akash = []
-nostr = ["dep:tokio-tungstenite"]
+nostr = ["dep:tokio-tungstenite", "dep:futures-util"]
 
 [dependencies]
 async-trait = "0.1"
+base64 = "0.22"
 futures = "0.3"
 tokio = { version = "1", features = ["full"] }
 bollard = { version = "0.18", optional = true }
 # For Nostr NIP-01 WS client (local relay testing)
 tokio-tungstenite = { version = "0.21", features = ["connect"], optional = true }
+futures-util = { version = "0.3", features = ["sink"], optional = true }
 cosmrs = { path = "../../cosmos-rust/cosmrs", features = ["cosmwasm", "grpc"] }
 log = "0.4.22"
 prost = "0.14"
 tendermint = { path = "../../tendermint-rs/tendermint" }
-tendermint-rpc = { path = "../../tendermint-rs/rpc", features = ["http-client"] }
+tendermint-rpc = { path = "../../tendermint-rs/rpc", features = ["http-client", "websocket-client"] }
 tonic = { version = "0.14", optional = true }
 serde = { version = "1", features = ["derive"] }
 serde_json = "1"
@@ -78,7 +80,7 @@ k256 = { version = "0.13", features = ["ecdsa"] }
 serde_json = "1"
 sha2 = "0.10"
 tar = "0.4"
-tempfile = "3"
+tempfile = { version = "3", optional = false }
 terp-rs = { path = "../../terp-rs/proto", features = ["rpc"] }
 tokio = { version = "1", features = ["full"] }
 tokio-test = "0.4"
@@ -99,6 +101,7 @@ path = "../examples/basic_cosmos.rs"
 [[example]]
 name = "ibc_transfer"
 path = "../examples/ibc_transfer.rs"
+required-features = ["docker"]
 
 [[example]]
 name = "ibc_transfer_e2e"
@@ -161,3 +164,13 @@ required-features = ["docker", "hashmerchant"]
 name = "snapshot"
 path = "../examples/snapshot.rs"
 required-features = ["docker"]
+
+[[example]]
+name = "calendar_demo"
+path = "../examples/calendar_demo.rs"
+required-features = ["docker"]
+
+[[example]]
+name = "nostr_calendar"
+path = "../examples/nostr_calendar.rs"
+required-features = ["docker", "nostr"]
