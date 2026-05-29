@@ -1,13 +1,13 @@
-pub mod cosmos;
-#[cfg(feature = "ethereum")]
-pub mod ethereum;
 #[cfg(feature = "akash")]
 pub mod akash;
 #[cfg(feature = "akash")]
 pub mod akash_oracle;
+pub mod cosmos;
+#[cfg(feature = "ethereum")]
+pub mod ethereum;
+pub mod penumbra;
 #[cfg(feature = "terp")]
 pub mod terp;
-pub mod penumbra;
 
 use std::collections::HashMap;
 
@@ -17,7 +17,9 @@ use serde::{Deserialize, Serialize};
 use crate::auth::Authenticator;
 use crate::error::{IctError, Result};
 use crate::runtime::DockerImage;
-use crate::tx::{ExecOutput, PacketAcknowledgement, PacketTimeout, Tx, TransferOptions, TxOptions, WalletAmount};
+use crate::tx::{
+    ExecOutput, PacketAcknowledgement, PacketTimeout, TransferOptions, Tx, TxOptions, WalletAmount,
+};
 use crate::tx_builder::TxBuilder;
 use crate::wallet::Wallet;
 
@@ -145,6 +147,7 @@ pub struct GenesisAccount {
 /// Full configuration for a chain instance.
 ///
 /// Mirrors Go ICT's `ibc.ChainConfig` with Rust-native types.
+/// todo: impl for & into cw-orch ChainInfo
 pub struct ChainConfig {
     pub chain_type: ChainType,
     pub name: String,
@@ -241,8 +244,7 @@ pub trait Chain: Send + Sync {
     /// Build default [`TxOptions`] from this chain's config.
     fn default_tx_opts(&self) -> TxOptions {
         let cfg = self.config();
-        TxOptions::new(&cfg.chain_id, &cfg.gas_prices)
-            .gas_adjustment(cfg.gas_adjustment)
+        TxOptions::new(&cfg.chain_id, &cfg.gas_prices).gas_adjustment(cfg.gas_adjustment)
     }
 
     /// Execute a `tx` subcommand with default tx options appended.
@@ -293,16 +295,27 @@ pub trait Chain: Send + Sync {
 
     /// Recover a key from a BIP39 mnemonic.
     async fn recover_key(&self, name: &str, mnemonic: &str) -> Result<()>;
+    
+    /// Get a key's bech32 address from a chain.
+    async fn key_address(&self, key_name: &str) -> Result<String> {
+        let output = self
+            .chain_exec(&["keys", "show", key_name, "-a", "--keyring-backend", "test"])
+            .await?;
+        let addr = output.stdout_str().trim().to_string();
+        if addr.is_empty() {
+            return Err(IctError::Wallet(format!(
+                "empty address for key '{key_name}'"
+            )))
+            .into();
+        }
+        Ok(addr)
+    }
 
     /// Get the raw address bytes for a named key.
     async fn get_address(&self, key_name: &str) -> Result<Vec<u8>>;
 
     /// Build a wallet from a key name and optional mnemonic.
-    async fn build_wallet(
-        &self,
-        key_name: &str,
-        mnemonic: &str,
-    ) -> Result<Box<dyn Wallet>>;
+    async fn build_wallet(&self, key_name: &str, mnemonic: &str) -> Result<Box<dyn Wallet>>;
 
     // -- Funds --
 

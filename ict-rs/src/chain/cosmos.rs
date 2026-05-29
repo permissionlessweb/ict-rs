@@ -46,7 +46,11 @@ impl CosmosChain {
         assert_eq!(cfg.chain_type, ChainType::Cosmos);
         Self {
             cfg,
-            num_validators: if num_validators == 0 { 1 } else { num_validators },
+            num_validators: if num_validators == 0 {
+                1
+            } else {
+                num_validators
+            },
             num_full_nodes,
             validators: Vec::new(),
             full_nodes: Vec::new(),
@@ -98,13 +102,16 @@ impl CosmosChain {
 
     /// Create node objects (does not start containers).
     fn create_nodes(&mut self) {
-        let image = self.cfg.images.first().cloned().unwrap_or_else(|| {
-            crate::runtime::DockerImage {
-                repository: "ghcr.io/strangelove-ventures/heighliner".to_string(),
-                version: "latest".to_string(),
-                uid_gid: None,
-            }
-        });
+        let image =
+            self.cfg
+                .images
+                .first()
+                .cloned()
+                .unwrap_or_else(|| crate::runtime::DockerImage {
+                    repository: "ghcr.io/strangelove-ventures/heighliner".to_string(),
+                    version: "latest".to_string(),
+                    uid_gid: None,
+                });
 
         let network_id = self
             .network_id
@@ -161,10 +168,7 @@ impl CosmosChain {
         }
 
         // Create containers for all nodes
-        let all_nodes = self
-            .validators
-            .iter_mut()
-            .chain(self.full_nodes.iter_mut());
+        let all_nodes = self.validators.iter_mut().chain(self.full_nodes.iter_mut());
 
         for node in all_nodes {
             node.create_container().await?;
@@ -250,10 +254,7 @@ impl CosmosChain {
 
                 // Write back via base64 to handle special chars
                 let encoded = base64_encode(new_toml.as_bytes());
-                let write_cmd = format!(
-                    "echo '{}' | base64 -d > {}",
-                    encoded, node_abs
-                );
+                let write_cmd = format!("echo '{}' | base64 -d > {}", encoded, node_abs);
                 node.exec_raw(&["sh", "-c", &write_cmd], &[]).await?;
 
                 debug!(
@@ -354,16 +355,17 @@ impl CosmosChain {
             // 1d. Gentx on THIS validator's OWN node (real denom)
             let staking = format!("{self_delegation}{denom}");
             let output = node
-                .gentx(key_name, &staking, &self.cfg.gas_prices, self.cfg.gas_adjustment)
+                .gentx(
+                    key_name,
+                    &staking,
+                    &self.cfg.gas_prices,
+                    self.cfg.gas_adjustment,
+                )
                 .await?;
             if output.exit_code != 0 {
                 return Err(IctError::ExecFailed {
                     exit_code: output.exit_code,
-                    stderr: format!(
-                        "gentx failed on validator {}: {}",
-                        i,
-                        output.stderr_str()
-                    ),
+                    stderr: format!("gentx failed on validator {}: {}", i, output.stderr_str()),
                 });
             }
         }
@@ -391,8 +393,7 @@ impl CosmosChain {
 
                 // Copy gentx files from validator N to primary
                 let src_dir = format!("{}/config/gentx", node.home_dir);
-                let cmd =
-                    format!("cp {src_dir}/*.json {gentx_dir}/ 2>/dev/null || true");
+                let cmd = format!("cp {src_dir}/*.json {gentx_dir}/ 2>/dev/null || true");
                 primary.exec_raw(&["sh", "-c", &cmd], &[]).await?;
                 debug!(validator = i, "Copied gentx to primary");
             }
@@ -401,9 +402,7 @@ impl CosmosChain {
         // Add extra genesis wallets (test users, faucets, etc.)
         for wallet in genesis_wallets {
             let coins = format!("{}{}", wallet.amount, denom);
-            primary
-                .add_genesis_account(&wallet.address, &coins)
-                .await?;
+            primary.add_genesis_account(&wallet.address, &coins).await?;
         }
 
         // Create faucet key and genesis account if faucet is configured
@@ -415,10 +414,7 @@ impl CosmosChain {
                 if output.exit_code != 0 {
                     return Err(IctError::ExecFailed {
                         exit_code: output.exit_code,
-                        stderr: format!(
-                            "recover_key for faucet failed: {}",
-                            output.stderr_str()
-                        ),
+                        stderr: format!("recover_key for faucet failed: {}", output.stderr_str()),
                     });
                 }
             } else {
@@ -426,10 +422,7 @@ impl CosmosChain {
                 if output.exit_code != 0 {
                     return Err(IctError::ExecFailed {
                         exit_code: output.exit_code,
-                        stderr: format!(
-                            "create_key for faucet failed: {}",
-                            output.stderr_str()
-                        ),
+                        stderr: format!("create_key for faucet failed: {}", output.stderr_str()),
                     });
                 }
             }
@@ -441,7 +434,9 @@ impl CosmosChain {
                 .coins
                 .clone()
                 .unwrap_or_else(|| format!("{genesis_amount}{denom}"));
-            let output = primary.add_genesis_account(&faucet_address, &faucet_coins).await?;
+            let output = primary
+                .add_genesis_account(&faucet_address, &faucet_coins)
+                .await?;
             if output.exit_code != 0 {
                 return Err(IctError::ExecFailed {
                     exit_code: output.exit_code,
@@ -508,18 +503,11 @@ impl CosmosChain {
         let genesis_b64 = base64_encode(&output.stdout);
 
         // Distribute to other validators and full nodes
-        let other_nodes = self
-            .validators
-            .iter()
-            .skip(1)
-            .chain(self.full_nodes.iter());
+        let other_nodes = self.validators.iter().skip(1).chain(self.full_nodes.iter());
 
         for node in other_nodes {
             let target_path = format!("{}/config/genesis.json", node.home_dir);
-            let cmd = format!(
-                "echo '{}' | base64 -d > {}",
-                genesis_b64, target_path
-            );
+            let cmd = format!("echo '{}' | base64 -d > {}", genesis_b64, target_path);
             node.exec_raw(&["sh", "-c", &cmd], &[]).await?;
         }
 
@@ -868,25 +856,86 @@ impl CosmosChain {
         for (i, node) in self.validators.iter().enumerate() {
             let opts = node.default_tx_opts().from("validator");
             let output = node
-                .exec_tx_with(
-                    &["tx", "gov", "vote", &prop_id_str, option],
-                    opts,
-                )
+                .exec_tx_with(&["tx", "gov", "vote", &prop_id_str, option], opts)
                 .await?;
 
             if output.exit_code != 0 {
                 return Err(IctError::ExecFailed {
                     exit_code: output.exit_code,
-                    stderr: format!(
-                        "validator {} vote failed: {}",
-                        i,
-                        output.stderr_str()
-                    ),
+                    stderr: format!("validator {} vote failed: {}", i, output.stderr_str()),
                 });
             }
             info!(validator = i, proposal_id = proposal_id, "Voted {}", option);
         }
         Ok(())
+    }
+
+    fn query_docker_host_port(&self, internal_port: u16) -> Option<u16> {
+        let primary = self.validators.first()?;
+        let container_id = primary.container_id.as_ref()?;
+
+        // Retry loop
+        for _ in 0..8 {
+            if let Ok(output) = std::process::Command::new("docker")
+                .args(["port", &container_id.0, &format!("{}/tcp", internal_port)])
+                .output()
+            {
+                if output.status.success() {
+                    let port_str = String::from_utf8_lossy(&output.stdout);
+                    if let Some(port) = port_str
+                        .trim()
+                        .split(':')
+                        .last()
+                        .and_then(|p| p.parse().ok())
+                    {
+                        return Some(port);
+                    }
+                }
+            }
+            std::thread::sleep(std::time::Duration::from_millis(100));
+        }
+        None
+    }
+
+    /// Query Docker for the actual host-mapped port for a given container and internal port.
+    ///
+    /// This bypasses any cached/stale port mapping and queries Docker directly.
+    async fn get_host_port(&self, internal_port: u16) -> Result<u16> {
+        let primary = self.primary_node()?;
+        let container_id = primary
+            .container_id
+            .as_ref()
+            .ok_or_else(|| IctError::Chain {
+                chain_id: self.cfg.chain_id.clone(),
+                source: anyhow::anyhow!("primary node has no container ID"),
+            })?;
+
+        // Query Docker for the port mapping
+        let output = tokio::process::Command::new("docker")
+            .args(["port", &container_id.0, &format!("{}/tcp", internal_port)])
+            .output()
+            .await
+            .map_err(|e| IctError::Chain {
+                chain_id: self.cfg.chain_id.clone(),
+                source: anyhow::anyhow!("failed to query docker port: {}", e),
+            })?;
+
+        let port_str = String::from_utf8_lossy(&output.stdout);
+        let port: u16 = port_str
+            .trim()
+            .split(':')
+            .last()
+            .ok_or_else(|| IctError::Chain {
+                chain_id: self.cfg.chain_id.clone(),
+                source: anyhow::anyhow!("no port found in docker output: {:?}", port_str),
+            })?
+            .parse()
+            .map_err(|e| IctError::Chain {
+                chain_id: self.cfg.chain_id.clone(),
+                source: anyhow::anyhow!("invalid port number: {}", e),
+            })?;
+
+        Ok(port)
     }
 }
 
@@ -981,6 +1030,27 @@ impl Chain for CosmosChain {
     fn chain_id(&self) -> &str {
         &self.cfg.chain_id
     }
+    fn host_grpc_address(&self) -> String {
+        self.query_docker_host_port(9090)
+            .map(|p| format!("http://127.0.0.1:{}", p))
+            .unwrap_or_else(|| "http://localhost:9090".to_string())
+    }
+
+    fn host_rpc_address(&self) -> String {
+        self.query_docker_host_port(26657)
+            .map(|p| format!("http://127.0.0.1:{}", p))
+            .unwrap_or_else(|| "http://localhost:26657".to_string())
+    }
+    // fn host_lcd_address(&self) -> String {
+    //     self.query_docker_host_port(1317)
+    //         .map(|port| format!("http://127.0.0.1:{}", port))
+    //         .unwrap_or_else(|| {
+    //             self.validators
+    //                 .first()
+    //                 .and_then(|n| n.host_lcd_address())
+    //                 .unwrap_or_else(|| "http://localhost:1317".to_string())
+    //         })
+    // }
 
     async fn initialize(&mut self, ctx: &TestContext) -> Result<()> {
         if self.initialized {
@@ -1003,9 +1073,7 @@ impl Chain for CosmosChain {
             let node_types = ["val", "fn"];
             for nt in &node_types {
                 for i in 0..std::cmp::max(self.num_validators, self.num_full_nodes) {
-                    let stale = crate::runtime::ContainerId(
-                        format!("{}-{}-{}", prefix, nt, i),
-                    );
+                    let stale = crate::runtime::ContainerId(format!("{}-{}-{}", prefix, nt, i));
                     let _ = self.runtime.stop_container(&stale).await;
                     let _ = self.runtime.remove_container(&stale).await;
                 }
@@ -1159,9 +1227,7 @@ impl Chain for CosmosChain {
                 let cmd_str = faucet_cfg.start_cmd.join(" ");
                 let faucet_cmd = format!("{env_str} setsid {cmd_str} &");
                 info!(cmd = %faucet_cmd, "Starting faucet");
-                primary
-                    .exec_raw(&["sh", "-c", &faucet_cmd], &[])
-                    .await?;
+                primary.exec_raw(&["sh", "-c", &faucet_cmd], &[]).await?;
 
                 // Brief wait then health-check
                 tokio::time::sleep(std::time::Duration::from_secs(1)).await;
@@ -1169,9 +1235,7 @@ impl Chain for CosmosChain {
                     "curl -sf http://localhost:{}/status || echo 'faucet_not_ready'",
                     faucet_cfg.port
                 );
-                let output = primary
-                    .exec_raw(&["sh", "-c", &health_cmd], &[])
-                    .await?;
+                let output = primary.exec_raw(&["sh", "-c", &health_cmd], &[]).await?;
                 if output.stdout_str().contains("faucet_not_ready") {
                     warn!("Faucet health-check failed, it may still be starting up");
                 } else {
@@ -1241,20 +1305,6 @@ impl Chain for CosmosChain {
         &self.internal_grpc
     }
 
-    fn host_rpc_address(&self) -> String {
-        self.validators
-            .first()
-            .and_then(|n| n.host_rpc_address())
-            .unwrap_or_else(|| "http://localhost:26657".to_string())
-    }
-
-    fn host_grpc_address(&self) -> String {
-        self.validators
-            .first()
-            .and_then(|n| n.host_grpc_address())
-            .unwrap_or_else(|| "http://localhost:9090".to_string())
-    }
-
     fn home_dir(&self) -> &str {
         self.validators
             .first()
@@ -1290,15 +1340,12 @@ impl Chain for CosmosChain {
     async fn get_address(&self, key_name: &str) -> Result<Vec<u8>> {
         let addr_str = self.primary_node()?.get_key_address(key_name).await?;
         // Decode bech32 to get raw bytes
-        let (_hrp, data) = bech32::decode(&addr_str).map_err(|e| IctError::Wallet(e.to_string()))?;
+        let (_hrp, data) =
+            bech32::decode(&addr_str).map_err(|e| IctError::Wallet(e.to_string()))?;
         Ok(data)
     }
 
-    async fn build_wallet(
-        &self,
-        key_name: &str,
-        mnemonic: &str,
-    ) -> Result<Box<dyn Wallet>> {
+    async fn build_wallet(&self, key_name: &str, mnemonic: &str) -> Result<Box<dyn Wallet>> {
         // Recover key on the node
         self.recover_key(key_name, mnemonic).await?;
 
@@ -1396,8 +1443,8 @@ impl Chain for CosmosChain {
             return Ok(Vec::new());
         }
 
-        let v: serde_json::Value = serde_json::from_str(output.stdout_str().trim())
-            .unwrap_or(serde_json::Value::Null);
+        let v: serde_json::Value =
+            serde_json::from_str(output.stdout_str().trim()).unwrap_or(serde_json::Value::Null);
 
         let acks = v["acknowledgements"]
             .as_array()

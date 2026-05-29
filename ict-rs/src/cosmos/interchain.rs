@@ -1,14 +1,12 @@
-use std::collections::HashMap;
-use std::sync::Arc;
-
-use tracing::{info, warn};
-
 use crate::chain::{Chain, TestContext};
 use crate::error::{IctError, Result};
 use crate::ibc::ChannelOptions;
 use crate::relayer::Relayer;
 use crate::runtime::{IctRuntime, RuntimeBackend};
 use crate::tx::WalletAmount;
+use std::collections::HashMap;
+use std::sync::Arc;
+use tracing::{info, warn};
 
 /// A link between two chains via a relayer (an IBC path).
 #[derive(Debug, Clone)]
@@ -206,14 +204,16 @@ impl Interchain {
         }
 
         for (relayer_name, chain_ids) in &relayer_chains {
-            let relayer = self.relayers.get(*relayer_name).ok_or_else(|| {
-                IctError::Config(format!("relayer not found: {relayer_name}"))
-            })?;
+            let relayer = self
+                .relayers
+                .get(*relayer_name)
+                .ok_or_else(|| IctError::Config(format!("relayer not found: {relayer_name}")))?;
 
             for chain_id in chain_ids {
-                let chain = self.chains.get(*chain_id).ok_or_else(|| {
-                    IctError::Config(format!("chain not found: {chain_id}"))
-                })?;
+                let chain = self
+                    .chains
+                    .get(*chain_id)
+                    .ok_or_else(|| IctError::Config(format!("chain not found: {chain_id}")))?;
 
                 let config = chain.config();
                 let rpc = chain.rpc_address();
@@ -276,9 +276,10 @@ impl Interchain {
     /// Create IBC paths (clients, connections, channels) for all links.
     async fn create_ibc_paths(&self) -> Result<()> {
         for link in &self.links {
-            let relayer = self.relayers.get(&link.relayer).ok_or_else(|| {
-                IctError::Config(format!("relayer not found: {}", link.relayer))
-            })?;
+            let relayer = self
+                .relayers
+                .get(&link.relayer)
+                .ok_or_else(|| IctError::Config(format!("relayer not found: {}", link.relayer)))?;
 
             info!(
                 path = %link.path,
@@ -299,7 +300,6 @@ impl Interchain {
                 ..Default::default()
             };
             relayer.link_path(&link.path, &channel_opts).await?;
-
             info!(path = %link.path, "IBC path created");
         }
 
