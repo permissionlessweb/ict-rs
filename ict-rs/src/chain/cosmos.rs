@@ -73,7 +73,7 @@ impl CosmosChain {
     }
 
     /// Get a mutable reference to the primary validator node.
-    fn primary_node_mut(&mut self) -> Result<&mut ChainNode> {
+    fn _primary_node_mut(&mut self) -> Result<&mut ChainNode> {
         self.validators.first_mut().ok_or_else(|| IctError::Chain {
             chain_id: self.cfg.chain_id.clone(),
             source: anyhow::anyhow!("no validators available"),
@@ -900,7 +900,7 @@ impl CosmosChain {
     /// Query Docker for the actual host-mapped port for a given container and internal port.
     ///
     /// This bypasses any cached/stale port mapping and queries Docker directly.
-    async fn get_host_port(&self, internal_port: u16) -> Result<u16> {
+    async fn _get_host_port(&self, internal_port: u16) -> Result<u16> {
         let primary = self.primary_node()?;
         let container_id = primary
             .container_id

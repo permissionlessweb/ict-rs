@@ -24,6 +24,11 @@ mod error;
 pub use convert::chain_info_from_cosmos;
 pub use error::BridgeError;
 
+/// O-Line deployment suite — wraps OLineTestEnv, OLineBinary, IctAkashNetwork.
+/// Feature-gated: `oline`.
+#[cfg(feature = "oline")]
+pub mod oline;
+
 use cw_orch_daemon::DaemonBuilder;
 use ict_rs::chain::cosmos::CosmosChain;
 use tracing::info;

@@ -12,6 +12,7 @@ pub mod terp;
 use std::collections::HashMap;
 
 use async_trait::async_trait;
+use cw_orch_core::environment::ChainInfoOwned;
 use serde::{Deserialize, Serialize};
 
 use crate::auth::Authenticator;
@@ -178,6 +179,21 @@ pub struct ChainConfig {
     pub genesis_style: GenesisStyle,
 }
 
+impl Into<ChainInfoOwned> for ChainConfig {
+    fn into(self) -> ChainInfoOwned {
+        ChainInfoOwned {
+            chain_id: todo!(),
+            gas_denom: todo!(),
+            gas_price: todo!(),
+            grpc_urls: todo!(),
+            lcd_url: todo!(),
+            fcd_url: todo!(),
+            network_info: todo!(),
+            kind: todo!(),
+        }
+    }
+}
+
 impl std::fmt::Debug for ChainConfig {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         f.debug_struct("ChainConfig")
@@ -295,7 +311,7 @@ pub trait Chain: Send + Sync {
 
     /// Recover a key from a BIP39 mnemonic.
     async fn recover_key(&self, name: &str, mnemonic: &str) -> Result<()>;
-    
+
     /// Get a key's bech32 address from a chain.
     async fn key_address(&self, key_name: &str) -> Result<String> {
         let output = self

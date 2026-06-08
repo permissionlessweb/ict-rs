@@ -35,6 +35,7 @@ use async_trait::async_trait;
 
 // Re-export the Circuit<Chain> upload-tracker struct defined in cw-orch-core.
 // Renamed to `UploadableCircuit` to avoid shadowing the `Circuit` trait below.
+#[cfg(feature = "zk")]
 pub use cw_orch_core::contract::circuits::{
     Circuit as UploadableCircuit, CircuitInstance, CircuitPath, CircuitSpec, CircuitsDir,
     CwOrchCircuitUpload,

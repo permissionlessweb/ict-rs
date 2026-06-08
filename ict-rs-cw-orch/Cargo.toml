@@ -5,10 +5,18 @@ edition.workspace = true
 rust-version.workspace = true
 description = "Bridge between ict-rs and cw-orchestrator: spawn local chains via ict-rs, interact via cw-orch Daemon"
 
+[features]
+default = []
+# O-Line deployment suite — wraps OLineTestEnv, OLineBinary, IctAkashNetwork
+oline = ["dep:o-line-sdl"]
+
 [dependencies]
 cw-orch-core = { path = "../../cw-orchestrator/packages/cw-orch-core" }
 cw-orch-daemon = { path = "../../cw-orchestrator/cw-orch-daemon" }
 ict-rs = { path = "../ict-rs", features = ["docker"] }
+
+# O-Line suite — wraps OLineTestEnv, OLineBinary, IctAkashNetwork for test suites
+o-line-sdl = { path = "../../o-line", features = ["interface", "testing"], optional = true }
 
 thiserror = "2"
 tokio = { version = "1", features = ["rt"] }

@@ -35,7 +35,7 @@
 //! docker images terpnetwork/terp-core:local-zk
 //!
 //! # Run the test:
-//! cd crates/public/ict-rs/ict-rs
+//! cd crates/ict-rs/ict-rs
 //! cargo run --example hashmerchant --features full
 //! ```
 
