@@ -6,10 +6,23 @@
 use crate::chain::SidecarConfig;
 use crate::runtime::DockerImage;
 
+/// Create a `SidecarConfig` for a local Zakura regtest node (feature `zakura`).
+///
+/// Ports/cmd are hardcoded for Private Bridge corridor (RPC 18232). Actual
+/// spawn should use [`crate::chain::zakura::spawn_zakura_local`] so the host
+/// `zakurad` binary and config are bind-mounted.
+#[cfg(feature = "zakura")]
+pub fn zakura_regtest_sidecar_config() -> SidecarConfig {
+    crate::chain::zakura::zakura_sidecar_config()
+}
+
 /// Create a `SidecarConfig` for the hash-market-server sidecar.
 ///
 /// The server runs alongside a Terp validator, receives transformed hashes
 /// from the client, and produces signed vote extensions via ABCI++.
+///
+/// Mount a config produced by [`hash_market_config_toml`] (or bounds variant)
+/// at `/home/sidecar/config.toml` before start.
 pub fn hash_market_server_config(
     signing_key: &str,
     chain_id: &str,
@@ -38,6 +51,134 @@ pub fn hash_market_server_config(
         validator_process: true,
         health_endpoint: Some("/health".into()),
         ready_timeout_secs: 30,
+    }
+}
+
+/// Default hash-market-server TOML: **state_root VE only** (legacy / default path).
+///
+/// `signing_key` is hex secp256k1 material — still prefer SFTP in production;
+/// local e2e may embed for determinism.
+pub fn hash_market_config_toml(bind: &str, chain_id: &str, signing_key_hex: &str) -> String {
+    format!(
+        r#"bind = "{bind}"
+chain_id = "{chain_id}"
+signing_key = "{signing_key_hex}"
+ve_enabled = true
+data_dir = "data"
+
+[[providers]]
+name = "eth_mainnet"
+chain_uid = "ethereum-mainnet"
+algo = "keccak256"
+mode = "http_poll"
+address = "http://127.0.0.1:8545"
+interval_secs = 12
+"#
+    )
+}
+
+/// Elevated sophistication: state_root **plus** multi-source **price_bound** providers.
+///
+/// Tacit rule: price providers are **bounds only** (never mint). In-process
+/// aggregation is covered by `hash-market` `tests::suite` oracle scenarios;
+/// this TOML is what Docker e2e mounts for the same matrix on a live sidecar.
+///
+/// See `hash-market/docs/oracle-connect-bounds.md`.
+pub fn hash_market_config_toml_with_oracle_bounds(
+    bind: &str,
+    chain_id: &str,
+    signing_key_hex: &str,
+) -> String {
+    format!(
+        r#"bind = "{bind}"
+chain_id = "{chain_id}"
+signing_key = "{signing_key_hex}"
+ve_enabled = true
+data_dir = "data"
+
+[oracle]
+bounds_enabled = true
+aggregation = "median"
+min_sources = 2
+max_age_secs = 120
+
+# ── state_root path (interop fabric) ────────────────────────────────────────
+[[providers]]
+name = "eth_mainnet"
+kind = "state_root"
+chain_uid = "ethereum-mainnet"
+algo = "keccak256"
+mode = "http_poll"
+address = "http://127.0.0.1:8545"
+interval_secs = 12
+
+# ── price_bound path (cUSD-like mid only; multi-source) ─────────────────────
+[[providers]]
+name = "mock_binance"
+kind = "price_bound"
+market_id = "ETH/USD"
+chain_uid = "price-feeds"
+algo = "price_median_v1"
+mode = "http_poll"
+address = "http://127.0.0.1:18080/ticker/binance"
+interval_secs = 5
+weight = 1.0
+
+[[providers]]
+name = "mock_coinbase"
+kind = "price_bound"
+market_id = "ETH/USD"
+chain_uid = "price-feeds"
+algo = "price_median_v1"
+mode = "http_poll"
+address = "http://127.0.0.1:18080/ticker/coinbase"
+interval_secs = 5
+weight = 1.0
+
+[[providers]]
+name = "mock_okx"
+kind = "price_bound"
+market_id = "ETH/USD"
+chain_uid = "price-feeds"
+algo = "price_median_v1"
+mode = "http_poll"
+address = "http://127.0.0.1:18080/ticker/okx"
+interval_secs = 5
+weight = 1.0
+"#
+    )
+}
+
+/// Capability labels for modular e2e matrices (shared language with hash-market suite).
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum HashMarketE2eCapability {
+    /// Merkle whitelist trees (headstash surface).
+    Trees,
+    /// Multi-source price bounds (Tacit oracle role).
+    OracleBounds,
+    /// ABCI++ vote-extension / HashRoot pipeline.
+    VoteExtension,
+    /// Nostr relay / kind:30070 (optional).
+    Nostr,
+}
+
+impl HashMarketE2eCapability {
+    pub fn as_str(self) -> &'static str {
+        match self {
+            Self::Trees => "trees",
+            Self::OracleBounds => "oracle_bounds",
+            Self::VoteExtension => "vote_extension",
+            Self::Nostr => "nostr",
+        }
+    }
+
+    /// Default modular matrix for ICT-RS hashmerchant e2e evolution.
+    pub fn default_matrix() -> &'static [HashMarketE2eCapability] {
+        &[
+            HashMarketE2eCapability::Trees,
+            HashMarketE2eCapability::OracleBounds,
+            HashMarketE2eCapability::VoteExtension,
+        ]
     }
 }
 

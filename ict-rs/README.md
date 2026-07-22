@@ -8,6 +8,7 @@ for spinning up Cosmos chain environments in tests and CI.
 | Module | Feature | Purpose |
 |---|---|---|
 | `chain` | — | Chain abstraction: create, start, stop, query Cosmos nodes |
+| `chain::zakura` | `zakura` | Local Zakura (Zcash regtest) node spawn — Private Bridge D6 / Option D |
 | `cosmos` | — | Node, tx, IBC, governance, genesis, modules, cosmwasm |
 | `runtime` | `docker` | Pluggable backend: Docker (default) or Kuasar sandboxes |
 | `quickspawn` | `docker` | Snapshot-based chain bootstrap + ~2s replay |
@@ -24,9 +25,31 @@ for spinning up Cosmos chain environments in tests and CI.
 |---|---|---|
 | `full` | yes | docker + ethereum + testing + terp |
 | `docker` | via full | Bollard Docker backend |
+| `zakura` | no | Local Zakura regtest spawn (`spawn_zakura_local`); implies `docker` |
 | `nostr` | no | WebSocket nostr relay sidecar (tokio-tungstenite) |
 | `testing` | via full | Test helpers, mock runtime |
 | `terp` | via full | Terp-specific chain modules (tokenfactory, feeshare, etc.) |
+
+### Zakura local (`feature = "zakura"`)
+
+Hardcoded corridor defaults (RPC **:18232**, miner dest, `terp-dest-binding-v0` seal).
+
+```rust
+// Cargo.toml: ict-rs = { features = ["zakura"] }  // pulls docker
+use ict_rs::prelude::*;
+use std::sync::Arc;
+
+async fn bring_up_zakura(rt: Arc<dyn IctRuntime /* RuntimeBackend */>) {
+    // export ZAKURAD_BIN=/path/to/linux/zakurad
+    let cfg = ZakuraNodeConfig::from_env().expect("ZAKURAD_BIN");
+    let mut node = spawn_zakura_local(rt, cfg).await.expect("spawn");
+    assert!(node.rpc_ready().await);
+    // node.owner_binding_hex() == REGTEST_MINER_OWNER_BINDING_HEX for default dest
+    node.teardown().await.ok();
+}
+```
+
+Regtest only — not mainnet ZEC.
 
 ```toml
 # Minimal test environment (no Ethereum, no Terp)

@@ -31,6 +31,9 @@ smartaccount = []
 globalfee = []
 akash = []
 nostr = ["dep:tokio-tungstenite", "dep:futures-util"]
+# Local Zakura (Zcash regtest) node spawn for private-bridge Option D / D6.
+# Requires Docker runtime (bollard). Binary path: ZAKURAD_BIN or ZakuraNodeConfig.
+zakura = ["docker"]
 
 [dependencies]
 async-trait = "0.1"
@@ -61,6 +64,7 @@ sha3 = { version = "0.10", optional = true }
 # Utilities
 bech32 = "0.11"
 hex = "0.4"
+ed25519-dalek = { version = "2.1", features = ["rand_core"] }
 rand = "0.8"
 toml = "0.8"
 tracing = "0.1"
@@ -81,7 +85,7 @@ serde_json = "1"
 sha2 = "0.10"
 tar = "0.4"
 tempfile = { version = "3", optional = false }
-terp-rs = { path = "../../terp-rs/proto", features = ["rpc"] }
+terp-rs = { path = "../../terp-rs/crates/sdk", features = ["rpc"] }
 tokio = { version = "1", features = ["full"] }
 tokio-test = "0.4"
 tracing-subscriber = { version = "0.3", features = ["env-filter"] }
@@ -159,6 +163,42 @@ required-features = ["docker"]
 name = "loyalty_rewards"
 path = "../examples/loyalty_rewards.rs"
 required-features = ["docker", "hashmerchant"]
+
+# Curated zk-jwt elevation of loyalty_rewards (design + contract path; chain optional).
+[[example]]
+name = "loyalty_rewards_zkjwt"
+path = "../examples/loyalty_rewards_zkjwt.rs"
+
+# Marketplace mirror inventory harness (parallel to loyalty_rewards).
+# Offline delta: marketplace_inventory_offline. Docker: needs Agent A wasm.
+[[example]]
+name = "marketplace_inventory"
+path = "../examples/marketplace_inventory.rs"
+required-features = ["docker", "hashmerchant"]
+
+[[example]]
+name = "marketplace_inventory_offline"
+path = "../examples/marketplace_inventory_offline.rs"
+
+# HashMerchant NFT oracle minter lab (hm-loyalty/v1 + Mode A/C price).
+# Offline default; ICT_HM_NFT_CHAIN=1 for Docker Mode C when wasm present.
+[[example]]
+name = "hashmerchant_nft_oracle_mint"
+path = "../examples/hashmerchant_nft_oracle_mint.rs"
+
+# HashMerchant L3: fresh Ubuntu → hm-support bootstrap → runtime health/VE (install packaging).
+# Handoff: docs/bootstrap/hashmerchant-ict-bootstrap-e2e-handoff.md
+[[example]]
+name = "hashmerchant_bootstrap_ubuntu"
+path = "../examples/hashmerchant_bootstrap_ubuntu.rs"
+required-features = ["docker"]
+
+# Client → isolated server ingress conductor (PR1: S1 mock server + S2 client attach).
+# Design: docs/bootstrap/hashmerchant-client-ingress-sequence.md
+[[example]]
+name = "hashmerchant_client_ingress_e2e"
+path = "../examples/hashmerchant_client_ingress_e2e.rs"
+required-features = ["docker"]
 
 [[example]]
 name = "snapshot"

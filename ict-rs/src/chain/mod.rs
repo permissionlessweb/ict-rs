@@ -8,6 +8,8 @@ pub mod ethereum;
 pub mod penumbra;
 #[cfg(feature = "terp")]
 pub mod terp;
+#[cfg(feature = "zakura")]
+pub mod zakura;
 
 use std::collections::HashMap;
 
@@ -182,9 +184,9 @@ pub struct ChainConfig {
 impl Into<ChainInfoOwned> for ChainConfig {
     fn into(self) -> ChainInfoOwned {
         ChainInfoOwned {
-            chain_id: todo!(),
-            gas_denom: todo!(),
-            gas_price: todo!(),
+            chain_id: self.chain_id,
+            gas_denom: self.denom,
+            gas_price: 200000f64,
             grpc_urls: todo!(),
             lcd_url: todo!(),
             fcd_url: todo!(),
