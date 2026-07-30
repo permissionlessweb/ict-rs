@@ -1,27 +1,28 @@
-//! Headstash E2E test using real Docker containers.
+//! Headstash E2E test using real Docker containers (ICTRS).
 //!
-//! Demonstrates the complete headstash lifecycle:
+//! Product A spine (Poseidon-v1 distro + claim):
 //! 1. Spin up a local terp chain (zk-wasmvm enabled) via Docker
-//! 2. Deploy both cw-headstash and cw-headstash-manifold contracts
-//! 3. Generate circuit keys (verifying key + proving key) for the headstash circuit
-//! 4. Upload the verifying key to the headstash contract
-//! 5. Create a headstash deployment via the manifold with token allocations
-//! 6. Build a genesis merkle tree from participant data
-//! 7. Generate a ZK proof for a participant claiming their allocation
-//! 8. Submit the proof to the contract for on-chain verification
-//! 9. Verify the claim succeeded (nullifier registered, funds distributed)
+//! 2. Deploy cw-headstash (+ optional manifold)
+//! 3. Load store-circuit blob from offline keygen (`just demo-keys` / `HEADSTASH_VK_PATH`)
+//! 4. Upload VK / store-circuit when chain supports it; `SetCircuitId`
+//! 5. Instantiate with **depth-32 Poseidon** `genesis_root` + `distro_hash_domain: poseidon_v1`
+//! 6. Build suite-backed claim fixture (or pre-generated JSON)
+//! 7. Real prove (K=18) or lab `claim_mock_verify`
+//! 8. `ProcessHeadstash` → public recipient funds
+//!
+//! SSOT usage: `crates/headstash/docs/circuit/PRODUCT-A-CW-ORCH-ICTRS-USAGE.md`
 //!
 //! ## Prerequisites
 //!
-//! Build the zk-wasmvm Docker image:
 //! ```sh
-//! cd terp-core
-//! make build-zk-local  # -> terpnetwork/terp-core:local-zk
-//! ```
+//! # Offline keys (from crates/headstash — long):
+//! just demo-keys
+//! export HEADSTASH_VK_PATH=$PWD/artifacts/headstash_vk.bin
 //!
-//! Run:
-//! ```sh
-//! cargo run --example headstash --features docker
+//! # zk-wasmvm image:
+//! make build-zk-local  # -> terpnetwork/terp-core:local-zk
+//!
+//! cargo run -p ict-rs --example headstash --features docker
 //! ```
 
 use std::path::PathBuf;
@@ -215,25 +216,35 @@ async fn run_test(chain: &mut CosmosChain) -> Result<(), Box<dyn std::error::Err
     //   let suite = HeadstashSuite::new();
     //   let bundle = suite.generate_e2e_test_bundle(4)?;
     //
-    // For now, we look for pre-generated keys on disk.
-    let keys_dir = zk_root.join("headstash_keys");
-    let vk_path = keys_dir.join("verifying_key.bin");
-    if !vk_path.exists() {
+    // Prefer offline Product A blob from `just demo-keys` / HEADSTASH_VK_PATH.
+    let vk_path = std::env::var("HEADSTASH_VK_PATH")
+        .map(PathBuf::from)
+        .unwrap_or_else(|_| {
+            zk_root
+                .join("terp-core/crates/headstash/artifacts/headstash_vk.bin")
+        });
+    let vk_path_alt = zk_root.join("headstash_keys/verifying_key.bin");
+    let vk_resolved = if vk_path.exists() {
+        Some(vk_path)
+    } else if vk_path_alt.exists() {
+        Some(vk_path_alt)
+    } else {
+        None
+    };
+    if let Some(ref p) = vk_resolved {
         println!(
-            "WARNING: Pre-generated VK not found at {}.",
-            vk_path.display()
+            "Found store-circuit VK: {} ({} bytes)",
+            p.display(),
+            std::fs::metadata(p)?.len()
         );
-        println!(
-            "Generate keys with HeadstashSuite::gen_headstash_circuit_keys() \
-             or set ZK_ROOT to a workspace containing headstash_keys/."
-        );
-        println!("Skipping VK upload and proof steps (scaffold only).");
+        node.copy_file_from_host(p, VK).await?;
+        println!("Copied VK into container at {}", VK);
     } else {
         println!(
-            "Found VK: {} ({} bytes)",
-            vk_path.display(),
-            std::fs::metadata(&vk_path)?.len()
+            "WARNING: store-circuit blob not found (HEADSTASH_VK_PATH or artifacts/headstash_vk.bin)."
         );
+        println!("Generate offline: cd crates/headstash && just demo-keys");
+        println!("Skipping VK upload (scaffold may still instantiate with claim_mock_verify).");
     }
 
     // -----------------------------------------------------------------------
@@ -261,19 +272,21 @@ async fn run_test(chain: &mut CosmosChain) -> Result<(), Box<dyn std::error::Err
     // -----------------------------------------------------------------------
     println!("\n--- [5/9] Creating headstash deployment ---");
 
-    // For the genesis root, we use a placeholder 32-byte zero root.
-    // In a real workflow this comes from the merkle tree built from
-    // participant data (step 7).
+    // Product A: genesis_root must be 32-byte depth-32 Poseidon path root from suite.
+    // Placeholder zeros are for scaffold only — replace with suite_backed root in full run.
     let genesis_root_b64 = base64_encode(&[0u8; 32]);
 
     // Build the headstash InstantiateMsg that the manifold forwards
     // to the cw-headstash contract.
     //
     // TODO: Provide real WavsProofOfOwnership with valid BLS12-381 PoP.
-    //       For now we use a minimal placeholder. In production, use
-    //       ark-bls12-381 to generate valid keypairs and PoP signatures.
+    // Lab: claim_mock_verify=true until store-circuit + proof_instance_verify are wired.
     let headstash_inst_msg = serde_json::json!({
         "genesis_root": genesis_root_b64,
+        "distro_hash_domain": "poseidon_v1",
+        "genesis_label": "ict-product-a",
+        "circuit_id": null,
+        "claim_mock_verify": true,
         "token_strategy": {
             "ExistingFungible": {
                 "proof": base64_encode(&derive_nd_bytes(DENOM)),
