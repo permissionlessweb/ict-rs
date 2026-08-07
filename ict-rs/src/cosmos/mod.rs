@@ -4,6 +4,7 @@ pub mod event_watcher;
 pub mod genesis;
 pub mod governance;
 pub mod ibc;
+pub mod ibc_wasm;
 pub mod interchain;
 pub mod modules;
 pub mod node;
