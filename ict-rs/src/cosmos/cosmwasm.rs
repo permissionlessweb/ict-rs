@@ -183,3 +183,43 @@ pub trait CosmWasmExt: Chain {
 }
 
 impl<T: Chain + ?Sized> CosmWasmExt for T {}
+
+/// Extract an attribute value from tx events (logs.events or top-level events).
+/// Used by ibc_wasm proposal flows and examples.
+pub fn extract_event_attr(
+    tx_json: &serde_json::Value,
+    event_type: &str,
+    attr_key: &str,
+) -> Option<String> {
+    if let Some(logs) = tx_json["logs"].as_array() {
+        for log in logs {
+            if let Some(events) = log["events"].as_array() {
+                for event in events {
+                    if event["type"].as_str() == Some(event_type) {
+                        if let Some(attrs) = event["attributes"].as_array() {
+                            for attr in attrs {
+                                if attr["key"].as_str() == Some(attr_key) {
+                                    return attr["value"].as_str().map(|s| s.to_string());
+                                }
+                            }
+                        }
+                    }
+                }
+            }
+        }
+    }
+    if let Some(events) = tx_json["events"].as_array() {
+        for event in events {
+            if event["type"].as_str() == Some(event_type) {
+                if let Some(attrs) = event["attributes"].as_array() {
+                    for attr in attrs {
+                        if attr["key"].as_str() == Some(attr_key) {
+                            return attr["value"].as_str().map(|s| s.to_string());
+                        }
+                    }
+                }
+            }
+        }
+    }
+    None
+}
