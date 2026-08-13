@@ -9,14 +9,7 @@
 
 use std::sync::Arc;
 
-use ict_rs::auth::generate_mnemonic;
-use ict_rs::chain::cosmos::CosmosChain;
-use ict_rs::chain::{Chain, TestContext};
-use ict_rs::runtime::mock::MockRuntime;
-use ict_rs::runtime::RuntimeBackend;
-use ict_rs::spec::builtin_chain_config;
-use ict_rs::tx::WalletAmount;
-use ict_rs::wallet::KeyWallet;
+use ict_rs::prelude::*;
 
 #[tokio::main]
 async fn main() -> Result<(), Box<dyn std::error::Error>> {

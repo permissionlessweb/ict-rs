@@ -42,13 +42,17 @@ pub mod testing;
 /// Re-export derive macros.
 pub use ict_rs_derive::{ExecuteFns, QueryFns};
 
-/// Convenience re-exports for common usage.
+/// Convenience re-exports for common usage (examples, tests, one-shot binaries).
 pub mod prelude {
-    pub use crate::auth::Authenticator;
+    pub use crate::auth::{generate_mnemonic, Authenticator};
     pub use crate::chain::{
-        cosmos::CosmosChain, terp::terp_chain_config, Chain, ChainConfig, ChainType, FaucetConfig,
+        cosmos::CosmosChain, Chain, ChainConfig, ChainType, FaucetConfig, GenesisStyle,
         SidecarConfig, SigningAlgorithm, TestContext,
     };
+    #[cfg(feature = "terp")]
+    pub use crate::chain::terp::terp_chain_config;
+    #[cfg(feature = "ethereum")]
+    pub use crate::chain::ethereum::{AnvilChain, ANVIL_DEFAULT_ACCOUNTS};
     #[cfg(feature = "zakura")]
     pub use crate::chain::zakura::{
         owner_binding_from_dest_display, spawn_zakura_local, zakura_sidecar_config,
@@ -56,23 +60,29 @@ pub mod prelude {
         REGTEST_MINER_DEST, REGTEST_MINER_OWNER_BINDING_HEX, ZAKURA_RPC_PORT,
     };
     pub use crate::cosmwasm::CosmWasmExt;
-    pub use crate::error::{IctError, Result};
+    pub use crate::error::{IctError, Result as IctResult};
     pub use crate::faucet::FaucetExt;
-    pub use crate::governance::GovernanceExt;
+    pub use crate::governance::{status, GovernanceExt};
     pub use crate::ibc_wasm::{IbcWasmExt, IbcWasmStoreProposal, IbcWasmStoreResult};
-    pub use crate::ibc::{ibc_denom, ibc_denom_multi_hop, ChannelOptions, ClientOptions};
+    pub use crate::ibc::{
+        ibc_denom, ibc_denom_multi_hop, ChannelOptions, ChannelOutput, ClientOptions,
+        ConnectionOutput,
+    };
     pub use crate::interchain::{
         wait_for_blocks, Interchain, InterchainBuildOptions, InterchainLink,
     };
     pub use crate::relayer::{build_relayer, DockerRelayer, Relayer, RelayerType};
+    pub use crate::runtime::mock::MockRuntime;
     pub use crate::runtime::{
-        docker::DockerBackend, DockerConfig, DockerImage, IctRuntime, RuntimeBackend,
+        ContainerOptions, DockerConfig, DockerImage, IctRuntime, PortBinding, RuntimeBackend,
     };
+    #[cfg(feature = "docker")]
+    pub use crate::runtime::docker::DockerBackend;
     pub use crate::sidecar::SidecarProcess;
-    pub use crate::spec::ChainSpec;
+    pub use crate::spec::{builtin_chain_config, ChainSpec};
     pub use crate::tx::{ExecOutput, TransferOptions, Tx, TxOptions, WalletAmount};
     pub use crate::tx_builder::{TxBuilder, TxMiddlewareBody, TxMiddlewareResp, TxResponse};
-    pub use crate::wallet::Wallet;
+    pub use crate::wallet::{KeyWallet, Wallet};
 
     pub use crate::{ExecuteFns, QueryFns};
 }

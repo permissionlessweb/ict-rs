@@ -44,11 +44,11 @@ bollard = { version = "0.18", optional = true }
 # For Nostr NIP-01 WS client (local relay testing)
 tokio-tungstenite = { version = "0.21", features = ["connect"], optional = true }
 futures-util = { version = "0.3", features = ["sink"], optional = true }
-cosmrs = { git = "ssh://returniflost@groot-wan/Users/returniflost/abstract/terp-core/crates/cosmos-rust", branch = "v3.1.0-zk.0", package = "cosmrs", features = ["cosmwasm", "grpc"] }
+cosmrs = { path = "../../cosmos-rust/cosmrs", package = "cosmrs", features = ["cosmwasm", "grpc"] }
 log = "0.4.22"
 prost = "0.14"
-tendermint = { git = "ssh://returniflost@groot-wan/Users/returniflost/abstract/terp-core/crates/tendermint-rs", branch = "v3.1.0-zk.0", package = "tendermint" }
-tendermint-rpc = { git = "ssh://returniflost@groot-wan/Users/returniflost/abstract/terp-core/crates/tendermint-rs", branch = "v3.1.0-zk.0", package = "tendermint-rpc", features = ["http-client", "websocket-client"] }
+tendermint = { path = "../../tendermint-rs/tendermint", package = "tendermint" }
+tendermint-rpc = { path = "../../tendermint-rs/rpc", package = "tendermint-rpc", features = ["http-client", "websocket-client"] }
 tonic = { version = "0.14", optional = true }
 serde = { version = "1", features = ["derive"] }
 serde_json = "1"
@@ -70,7 +70,7 @@ toml = "0.8"
 tracing = "0.1"
 
 # Derive macros
-cw-orch-core = { git = "ssh://returniflost@groot-wan/Users/returniflost/abstract/terp-core/crates/cw-orchestrator", branch = "product/cw3", package = "cw-orch-core", features = ["terp"] }
+cw-orch-core = { path = "../../cw-orchestrator/packages/cw-orch-core", package = "cw-orch-core", features = ["terp"] }
 ict-rs-derive = { path = "../ict-rs-derive" }
 
 [dev-dependencies]
@@ -85,7 +85,7 @@ serde_json = "1"
 sha2 = "0.10"
 tar = "0.4"
 tempfile = { version = "3", optional = false }
-terp-rs = { git = "ssh://returniflost@groot-wan/Users/returniflost/abstract/terp-core/crates/terp-rs", branch = "v0.0.2-dev", package = "terp-rs", features = ["rpc"] }
+terp-rs = { path = "../../terp-rs/crates/sdk", package = "terp-rs", features = ["rpc"] }
 tokio = { version = "1", features = ["full"] }
 tokio-test = "0.4"
 tracing-subscriber = { version = "0.3", features = ["env-filter"] }
@@ -214,3 +214,8 @@ required-features = ["docker"]
 name = "nostr_calendar"
 path = "../examples/nostr_calendar.rs"
 required-features = ["docker", "nostr"]
+
+[[example]]
+name = "trustless_builder"
+path = "../examples/trustless_builder.rs"
+required-features = ["docker", "ethereum"]

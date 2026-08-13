@@ -29,9 +29,7 @@
 
 use std::time::{Duration, Instant};
 
-use ict_rs::runtime::{
-    ContainerOptions, DockerConfig, DockerImage, IctRuntime, PortBinding, RuntimeBackend,
-};
+use ict_rs::prelude::*;
 
 /// Docker image to use. Override with TERP_IMAGE_REPO / TERP_IMAGE_VERSION env vars.
 fn terp_image() -> DockerImage {

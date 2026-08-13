@@ -42,12 +42,7 @@
 use std::path::PathBuf;
 use std::sync::Arc;
 
-use ict_rs::chain::cosmos::CosmosChain;
-use ict_rs::chain::ethereum::AnvilChain;
-use ict_rs::chain::{Chain, ChainType, SigningAlgorithm, TestContext};
-use ict_rs::runtime::docker::DockerBackend;
-use ict_rs::runtime::{DockerConfig, DockerImage, RuntimeBackend};
-use ict_rs::spec::builtin_chain_config;
+use ict_rs::prelude::*;
 
 use sha3::Keccak256;
 use sha2::Digest;
@@ -452,7 +447,6 @@ async fn run_test(
 
     let config_dir = tempfile::tempdir()?;
     let config_path = config_dir.path().join("config.toml");
-    // TODO: add this into terp-core cmd
     std::fs::write(&config_path, format!(
         r#"bind = "0.0.0.0:{http_port}"
 chain_id = "{terp_chain_id}"

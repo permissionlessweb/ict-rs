@@ -14,7 +14,7 @@ pub mod zakura;
 use std::collections::HashMap;
 
 use async_trait::async_trait;
-use cw_orch_core::environment::ChainInfoOwned;
+use cw_orch_core::environment::{ChainInfoOwned, ChainKind, NetworkInfoOwned};
 use serde::{Deserialize, Serialize};
 
 use crate::auth::Authenticator;
@@ -150,7 +150,7 @@ pub struct GenesisAccount {
 /// Full configuration for a chain instance.
 ///
 /// Mirrors Go ICT's `ibc.ChainConfig` with Rust-native types.
-/// todo: impl for & into cw-orch ChainInfo
+/// Converts to cw-orch [`ChainInfoOwned`] via [`From`] (declared local defaults).
 pub struct ChainConfig {
     pub chain_type: ChainType,
     pub name: String,
@@ -181,18 +181,47 @@ pub struct ChainConfig {
     pub genesis_style: GenesisStyle,
 }
 
-impl Into<ChainInfoOwned> for ChainConfig {
-    fn into(self) -> ChainInfoOwned {
+/// Parse a Cosmos `gas_prices` string (`"0.025uterp"`) into a numeric price.
+pub fn parse_gas_price(gas_prices: &str) -> f64 {
+    gas_prices
+        .trim()
+        .trim_end_matches(|c: char| c.is_ascii_alphabetic())
+        .parse::<f64>()
+        .unwrap_or(0.025)
+}
+
+impl ChainConfig {
+    /// cw-orch view of this **config** (declared defaults, not live host ports).
+    ///
+    /// Use [`ict_rs_cw_orch::chain_info_from_cosmos`] after `start()` when you
+    /// need the Docker-mapped gRPC/LCD URLs.
+    pub fn to_chain_info(&self) -> ChainInfoOwned {
         ChainInfoOwned {
-            chain_id: self.chain_id,
-            gas_denom: self.denom,
-            gas_price: 200000f64,
-            grpc_urls: todo!(),
-            lcd_url: todo!(),
-            fcd_url: todo!(),
-            network_info: todo!(),
-            kind: todo!(),
+            chain_id: self.chain_id.clone(),
+            gas_denom: self.denom.clone(),
+            gas_price: parse_gas_price(&self.gas_prices),
+            grpc_urls: vec!["http://127.0.0.1:9090".to_string()],
+            lcd_url: Some("http://127.0.0.1:1317".to_string()),
+            fcd_url: None,
+            network_info: NetworkInfoOwned {
+                chain_name: self.name.clone(),
+                pub_address_prefix: self.bech32_prefix.clone(),
+                coin_type: self.coin_type,
+            },
+            kind: ChainKind::Local,
         }
+    }
+}
+
+impl From<&ChainConfig> for ChainInfoOwned {
+    fn from(cfg: &ChainConfig) -> Self {
+        cfg.to_chain_info()
+    }
+}
+
+impl From<ChainConfig> for ChainInfoOwned {
+    fn from(cfg: ChainConfig) -> Self {
+        cfg.to_chain_info()
     }
 }
 
@@ -396,5 +425,36 @@ pub trait Chain: Send + Sync {
     /// Get the hostname of a named sidecar for Docker network DNS. Default returns None.
     fn sidecar_hostname(&self, _sidecar_name: &str) -> Option<String> {
         None
+    }
+}
+
+
+#[cfg(test)]
+mod convert_tests {
+    use super::*;
+
+    #[test]
+    fn parse_gas_price_strips_denom() {
+        assert!((parse_gas_price("0.025uterp") - 0.025).abs() < 1e-12);
+        assert!((parse_gas_price("0.1") - 0.1).abs() < 1e-12);
+    }
+
+    #[cfg(feature = "terp")]
+    #[test]
+    fn chain_config_into_chain_info_owned_is_complete() {
+        let cfg = crate::chain::terp::terp_chain_config();
+        let info: ChainInfoOwned = (&cfg).into();
+        assert_eq!(info.chain_id, "terp-local-1");
+        assert_eq!(info.gas_denom, "uterp");
+        assert!((info.gas_price - 0.025).abs() < 1e-12);
+        assert_eq!(info.grpc_urls, vec!["http://127.0.0.1:9090".to_string()]);
+        assert_eq!(info.lcd_url.as_deref(), Some("http://127.0.0.1:1317"));
+        assert_eq!(info.fcd_url, None);
+        assert_eq!(info.network_info.chain_name, "terp");
+        assert_eq!(info.network_info.pub_address_prefix, "terp");
+        assert_eq!(info.network_info.coin_type, 118);
+        assert_eq!(info.kind, ChainKind::Local);
+        let owned: ChainInfoOwned = cfg.into();
+        assert_eq!(owned.chain_id, "terp-local-1");
     }
 }

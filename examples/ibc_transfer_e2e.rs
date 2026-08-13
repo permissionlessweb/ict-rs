@@ -17,13 +17,7 @@
 
 use std::collections::HashMap;
 
-use ict_rs::chain::cosmos::CosmosChain;
-use ict_rs::chain::{Chain, ChainConfig, ChainType, SigningAlgorithm};
-use ict_rs::ibc::ibc_denom;
-use ict_rs::interchain::{wait_for_blocks, Interchain, InterchainBuildOptions, InterchainLink};
-use ict_rs::relayer::{build_relayer, RelayerType};
-use ict_rs::runtime::{DockerConfig, DockerImage, IctRuntime};
-use ict_rs::tx::{TransferOptions, WalletAmount};
+use ict_rs::prelude::*;
 
 /// Docker image to use. Override with TERP_IMAGE env var.
 fn terp_image() -> DockerImage {

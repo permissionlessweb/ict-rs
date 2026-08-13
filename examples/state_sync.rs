@@ -20,10 +20,7 @@
 
 use std::collections::HashMap;
 
-use ict_rs::chain::cosmos::CosmosChain;
-use ict_rs::chain::{Chain, ChainConfig, ChainType, SigningAlgorithm, TestContext};
-use ict_rs::interchain::wait_for_blocks;
-use ict_rs::runtime::{DockerConfig, DockerImage, IctRuntime};
+use ict_rs::prelude::*;
 
 /// Docker image to use. Override with TERP_IMAGE_REPO / TERP_IMAGE_VERSION env vars.
 fn terp_image() -> DockerImage {

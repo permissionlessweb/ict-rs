@@ -22,17 +22,18 @@
 //! # zk-wasmvm image:
 //! make build-zk-local  # -> terpnetwork/terp-core:local-zk
 //!
-//! cargo run -p ict-rs --example headstash --features docker
+//! # Honest path (required):
+//! #   mock-labeled lab (no silent success):
+//! HEADSTASH_CLAIM_MODE=mock cargo run -p ict-rs --example headstash --features docker
+//! #   real claim (fails if VK / proof missing):
+//! HEADSTASH_CLAIM_MODE=real cargo run -p ict-rs --example headstash --features docker
 //! ```
+//!
+//! SSOT honesty: `terp-rs/docs/TERP-RS-ICT-HS-HONEST-PATH.md`
 
 use std::path::PathBuf;
 
-use ict_rs::chain::cosmos::CosmosChain;
-use ict_rs::chain::{Chain, ChainConfig, ChainType, SigningAlgorithm, TestContext};
-use ict_rs::cosmwasm::CosmWasmExt;
-use ict_rs::interchain::wait_for_blocks;
-use ict_rs::runtime::{DockerConfig, DockerImage, IctRuntime};
-use ict_rs::tx::WalletAmount;
+use ict_rs::prelude::*;
 
 // ---------------------------------------------------------------------------
 // Constants
@@ -117,8 +118,25 @@ fn resolve_zk_root() -> Result<PathBuf, Box<dyn std::error::Error>> {
 // Main test flow
 // ---------------------------------------------------------------------------
 
+/// Honest claim mode. Unset + no real claim => error (not success).
+fn claim_mode() -> String {
+    std::env::var("HEADSTASH_CLAIM_MODE")
+        .unwrap_or_default()
+        .trim()
+        .to_ascii_lowercase()
+}
+
+fn skip_err(reason: &str) -> Box<dyn std::error::Error> {
+    format!("skip_reason={reason} (not success; set HEADSTASH_CLAIM_MODE=mock for the labeled lab path)").into()
+}
+
 async fn run_test(chain: &mut CosmosChain) -> Result<(), Box<dyn std::error::Error>> {
     let zk_root = resolve_zk_root()?;
+    let mode = claim_mode();
+    println!("HONEST_PATH_MODE={}", if mode.is_empty() { "<unset>" } else { &mode });
+    if mode != "mock" && mode != "real" && !mode.is_empty() {
+        return Err(skip_err("unknown_HEADSTASH_CLAIM_MODE"));
+    }
 
     // -----------------------------------------------------------------------
     // Step 0: Validate host-side artifacts exist
@@ -362,8 +380,8 @@ async fn run_test(chain: &mut CosmosChain) -> Result<(), Box<dyn std::error::Err
                 "This is expected if WavsProofOfOwnership validation \
                  requires real BLS keys."
             );
-            println!("Scaffold complete. Exiting without proof submission.");
-            return Ok(());
+            println!("HONEST_PATH=none skip_reason=instantiate_failed_wavs_pop");
+            return Err(skip_err("instantiate_failed_wavs_pop"));
         }
     };
     wait_for_blocks(chain, 2).await?;
@@ -536,11 +554,24 @@ async fn run_test(chain: &mut CosmosChain) -> Result<(), Box<dyn std::error::Err
     //    let dup_result = chain.execute_contract(...).await;
     //    assert!(dup_result.is_err(), "duplicate nullifier must be rejected");
 
-    println!("\nHeadstash E2E workflow scaffold complete.");
-    println!("To run the full proof flow, add zk-headstash as a dev-dependency");
-    println!("and uncomment the proof generation + submission blocks above.");
+    println!("\nHeadstash E2E: no ProcessHeadstash proof was submitted.");
+    println!("To run the real claim path, add zk-headstash and set HEADSTASH_CLAIM_MODE=real.");
 
-    Ok(())
+    match mode.as_str() {
+        "mock" => {
+            println!("HONEST_PATH=mock_labeled claim_mock_verify=true product_settle=false");
+            println!("Lab path finished. This is not a real zk-headstash claim.");
+            Ok(())
+        }
+        "real" => {
+            println!("HONEST_PATH=none skip_reason=real_claim_not_wired");
+            Err(skip_err("real_claim_not_wired"))
+        }
+        _ => {
+            println!("HONEST_PATH=none skip_reason=proof_path_skipped");
+            Err(skip_err("proof_path_skipped"))
+        }
+    }
 }
 
 // ---------------------------------------------------------------------------

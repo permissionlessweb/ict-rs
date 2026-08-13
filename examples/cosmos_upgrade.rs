@@ -24,12 +24,7 @@
 //! cargo run --example cosmos_upgrade --features docker
 //! ```
 
-use ict_rs::chain::cosmos::CosmosChain;
-use ict_rs::chain::{Chain, ChainConfig, ChainType, SigningAlgorithm, TestContext};
-use ict_rs::governance::{status, GovernanceExt};
-use ict_rs::interchain::wait_for_blocks;
-use ict_rs::runtime::{DockerConfig, DockerImage, IctRuntime};
-use ict_rs::tx::WalletAmount;
+use ict_rs::prelude::*;
 
 /// How many blocks in the future to schedule the upgrade halt.
 const HALT_HEIGHT_DELTA: u64 = 9;

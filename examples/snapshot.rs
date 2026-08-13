@@ -30,10 +30,7 @@
 
 use std::io::Write;
 
-use ict_rs::chain::cosmos::CosmosChain;
-use ict_rs::chain::{Chain, ChainConfig, ChainType, SigningAlgorithm, TestContext};
-use ict_rs::interchain::wait_for_blocks;
-use ict_rs::runtime::{DockerConfig, DockerImage, IctRuntime};
+use ict_rs::prelude::*;
 
 /// Image to use for the test chain.
 const IMAGE_REPO: &str = "ghcr.io/terpnetwork/terp-core";

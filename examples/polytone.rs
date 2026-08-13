@@ -26,13 +26,7 @@
 use std::collections::HashMap;
 use std::path::PathBuf;
 
-use ict_rs::chain::cosmos::CosmosChain;
-use ict_rs::chain::{Chain, ChainConfig, ChainType, SigningAlgorithm};
-use ict_rs::ibc::ChannelOptions;
-use ict_rs::interchain::{wait_for_blocks, Interchain, InterchainBuildOptions, InterchainLink};
-use ict_rs::relayer::{build_relayer, RelayerType};
-use ict_rs::runtime::{DockerConfig, DockerImage, IctRuntime};
-use ict_rs::tx::WalletAmount;
+use ict_rs::prelude::*;
 
 /// Contract wasm files (relative to ZK workspace root).
 const NOTE_WASM: &str = "terp-core/tests/interchaintest/contracts/polytone_note.wasm";

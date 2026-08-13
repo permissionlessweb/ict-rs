@@ -22,11 +22,7 @@
 
 use std::path::PathBuf;
 
-use ict_rs::chain::cosmos::CosmosChain;
-use ict_rs::chain::{Chain, ChainConfig, ChainType, SigningAlgorithm, TestContext};
-use ict_rs::interchain::wait_for_blocks;
-use ict_rs::runtime::{DockerConfig, DockerImage, IctRuntime};
-use ict_rs::tx::WalletAmount;
+use ict_rs::prelude::*;
 
 /// Docker image for the zk-wasmvm enabled chain.
 const ZK_IMAGE_REPO: &str = "terpnetwork/terp-core";
@@ -252,22 +248,24 @@ async fn run_test(chain: &mut CosmosChain) -> Result<(), Box<dyn std::error::Err
     // 7. Load real proof from JSON file
     println!("\n--- Loading proof data ---");
     let proof_path = zk_root.join(PROOF_REL);
-    let proof_json: serde_json::Value = if proof_path.exists() {
-        let data = std::fs::read_to_string(&proof_path)?;
-        serde_json::from_str(&data)?
-    } else {
-        println!("WARNING: proof file not found at {}", proof_path.display());
-        serde_json::Value::Null
-    };
-
+    if !proof_path.exists() {
+        return Err(format!(
+            "required proof fixture missing: {} (set ZK_ROOT or add the JSON; no skip)",
+            proof_path.display()
+        ).into());
+    }
+    let data = std::fs::read_to_string(&proof_path)?;
+    let proof_json: serde_json::Value = serde_json::from_str(&data)?;
     let rick_proof = proof_json["rick"]["proof"]
         .as_str()
         .unwrap_or("")
         .to_string();
 
     if rick_proof.is_empty() || rick_proof.starts_with("ADD_") {
-        println!("No valid 'rick' proof available, skipping proof verification.");
-        return Ok(());
+        return Err(format!(
+            "proof fixture at {} has no usable rick.proof (empty or ADD_ placeholder)",
+            proof_path.display()
+        ).into());
     }
     println!("Loaded 'rick' proof ({} bytes base64)", rick_proof.len());
 
@@ -314,7 +312,7 @@ async fn run_test(chain: &mut CosmosChain) -> Result<(), Box<dyn std::error::Err
             }
         }
         Err(e) => {
-            println!("Proof execution error: {}", e);
+            return Err(format!("proof execute failed: {e}").into());
         }
     }
 
