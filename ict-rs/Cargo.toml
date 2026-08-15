@@ -219,3 +219,7 @@ required-features = ["docker", "nostr"]
 name = "trustless_builder"
 path = "../examples/trustless_builder.rs"
 required-features = ["docker", "ethereum"]
+
+[[bin]]
+name = "ict-ci"
+path = "src/bin/ict-ci.rs"

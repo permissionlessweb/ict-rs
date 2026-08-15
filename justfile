@@ -51,3 +51,22 @@ loyalty_verifier_dir := terp_core_dir / "tests/tsh/hashmerchant/contracts/loyalt
 # Build loyalty-verifier contract wasm via optimizer and copy to interchaintest/contracts/
 wasm:
     cd "{{loyalty_verifier_dir}}" && just wasm
+
+# --- CI: one compile, many suite runs (no second cargo) ---
+
+ci_features := "docker,terp,testing"
+ci_examples := "ibc_transfer polytone cosmos_upgrade"
+
+# Build ict-ci + docker examples once. Output: target/release/ict-ci and target/release/examples/*
+ci-build:
+    cargo build -p ict-rs --release --features {{ci_features}} --bin ict-ci \
+      --example ibc_transfer --example polytone --example cosmos_upgrade
+
+# Run a prebuilt suite. Usage: just ci-run ibc_transfer
+ci-run suite:
+    ICT_CI_BIN_DIR="{{justfile_directory()}}/target/release/examples" \
+      "{{justfile_directory()}}/target/release/ict-ci" run {{suite}}
+
+ci-list:
+    ICT_CI_BIN_DIR="{{justfile_directory()}}/target/release/examples" \
+      "{{justfile_directory()}}/target/release/ict-ci" list
