@@ -78,3 +78,23 @@ ci-pack:
 # Cross-arch via Docker (default linux/amd64 for GHA / s3.terp.network).
 ci-build-docker:
     scripts/ci/build-bins-docker.sh
+
+
+# Commit-keyed prebuilts (same model as terp-core).
+ci-resolve-prebuilt:
+    scripts/ci/resolve-prebuilt.sh
+
+ci-fetch-prebuilt dest="/tmp/ict-prebuilt":
+    scripts/ci/fetch-prebuilt.sh {{dest}}
+
+ci-publish-prebuilt tarball="dist/ict-ci-linux-x86_64.tar.gz":
+    TARBALL={{tarball}} scripts/ci/publish-prebuilt-commit.sh
+
+# Fetch pinned terp-core image for this ict-rs E2E (does not compile terpd).
+ci-fetch-terp dest="/tmp/terp-prebuilt":
+    scripts/ci/fetch-terp-prebuilt.sh {{dest}}
+
+# Rebuild linux/amd64 ict-ci via Dockerfile.ci (same path as GHA rebuild job).
+ci-rebuild-docker:
+    docker build --platform linux/amd64 -f Dockerfile.ci -t ict-rs-ci:rebuild --target export ..
+

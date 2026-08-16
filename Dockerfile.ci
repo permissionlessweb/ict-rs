@@ -1,0 +1,17 @@
+# Reproducible ict-ci build. Context must be the parent crates/ directory
+# (path-deps live as siblings). Same role as terp-core/Dockerfile for terpd.
+FROM rust:1.89-bookworm AS build
+WORKDIR /crates/ict-rs
+RUN apt-get update && DEBIAN_FRONTEND=noninteractive apt-get install -y --no-install-recommends \
+      pkg-config libssl-dev protobuf-compiler cmake clang git ca-certificates \
+    && rm -rf /var/lib/apt/lists/*
+COPY . /crates
+ENV CARGO_TERM_COLOR=always \
+    CARGO_TARGET_DIR=/crates/ict-rs/target
+RUN cargo build -p ict-rs --release --features docker,terp,testing \
+      --bin ict-ci --example ibc_transfer --example polytone
+
+FROM debian:bookworm-slim AS export
+COPY --from=build /crates/ict-rs/target/release/ict-ci /out/ict-ci
+COPY --from=build /crates/ict-rs/target/release/examples/ibc_transfer /out/examples/ibc_transfer
+COPY --from=build /crates/ict-rs/target/release/examples/polytone /out/examples/polytone

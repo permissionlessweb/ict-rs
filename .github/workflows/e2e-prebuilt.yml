@@ -1,0 +1,130 @@
+# Same graph as terp-core interchaintest-E2E.yml:
+#   e2e-tests fetches MinIO bits and runs immediately
+#   rebuild compiles this commit in Docker (does not block tests)
+#   assert-identical requires both and compares ict-ci sha256
+#
+# Dispatch only until the linux-amd64 prebuilt for this SHA is published.
+name: ict-rs E2E (prebuilt)
+
+on:
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+env:
+  PREBUILT_HOST: https://minio.terp.network
+  ICT_RS_COMMIT: 73bd2e8dc5a09ad580afb6549b227b49e01ceb53
+
+concurrency:
+  group: ${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  e2e-tests:
+    runs-on: ubuntu-latest
+    strategy:
+      fail-fast: false
+      matrix:
+        suite:
+          - ibc_transfer
+          - polytone
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+        with:
+          fetch-depth: 1
+
+      - name: Fetch prebuilt ict-ci for pinned commit
+        run: bash scripts/ci/fetch-prebuilt.sh /tmp/ict-prebuilt
+
+      - name: Fetch prebuilt terp-core image
+        run: bash scripts/ci/fetch-terp-prebuilt.sh /tmp/terp-prebuilt
+
+      - name: Load chain image
+        run: |
+          set -euo pipefail
+          docker image load -i /tmp/terp-prebuilt/terp-core-local-linux-amd64.tar
+          docker image inspect terpnetwork/terp-core:local >/dev/null
+
+      - name: Run suite
+        env:
+          TERP_IMAGE_REPO: terpnetwork/terp-core
+          TERP_IMAGE_VERSION: local
+          ICT_CI_BIN_DIR: /tmp/ict-prebuilt/examples
+        run: /tmp/ict-prebuilt/ict-ci run ${{ matrix.suite }}
+
+      - name: Upload prebuilt ict-ci digest
+        if: ${{ !env.ACT }}
+        uses: actions/upload-artifact@v4
+        with:
+          name: prebuilt-ict-ci
+          path: |
+            /tmp/ict-prebuilt/ict-ci
+            /tmp/ict-prebuilt/SOURCE_COMMIT
+          retention-days: 3
+
+  rebuild:
+    if: false
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+        with:
+          fetch-depth: 1
+          path: ict-rs
+
+      - name: Fetch path-deps
+        run: bash ict-rs/scripts/ci/fetch-path-deps.sh
+
+      - name: Set up Docker Buildx
+        uses: docker/setup-buildx-action@v3
+
+      - name: Rebuild ict-ci (linux/amd64)
+        run: |
+          set -euo pipefail
+          docker build --platform linux/amd64 \
+            -f ict-rs/Dockerfile.ci \
+            -t ict-rs-ci:rebuild \
+            --target export \
+            .
+          cid=$(docker create ict-rs-ci:rebuild)
+          mkdir -p /tmp/rebuilt/examples
+          docker cp "$cid":/out/ict-ci /tmp/rebuilt/ict-ci
+          docker cp "$cid":/out/examples/ibc_transfer /tmp/rebuilt/examples/ibc_transfer
+          docker cp "$cid":/out/examples/polytone /tmp/rebuilt/examples/polytone
+          docker rm "$cid"
+          chmod +x /tmp/rebuilt/ict-ci /tmp/rebuilt/examples/*
+          sha256sum /tmp/rebuilt/ict-ci
+
+      - name: Upload rebuilt ict-ci
+        if: ${{ !env.ACT }}
+        uses: actions/upload-artifact@v4
+        with:
+          name: rebuilt-ict-ci
+          path: /tmp/rebuilt/ict-ci
+          retention-days: 3
+
+  assert-identical:
+    needs: [e2e-tests, rebuild]
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+        with:
+          fetch-depth: 1
+
+      - name: Download prebuilt ict-ci
+        uses: actions/download-artifact@v4
+        with:
+          name: prebuilt-ict-ci
+          path: /tmp/prebuilt
+
+      - name: Download rebuilt ict-ci
+        uses: actions/download-artifact@v4
+        with:
+          name: rebuilt-ict-ci
+          path: /tmp/rebuilt
+
+      - name: Assert identical bits
+        run: bash scripts/ci/assert-identical.sh /tmp/prebuilt/ict-ci /tmp/rebuilt/ict-ci
