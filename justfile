@@ -69,3 +69,12 @@ ci-run suite:
 ci-list:
     ICT_CI_BIN_DIR="{{justfile_directory()}}/target/release/examples" \
       "{{justfile_directory()}}/target/release/ict-ci" list
+
+
+# Pack host-arch tarball from the last ci-build (darwin/linux as uname).
+ci-pack:
+    scripts/ci/pack-bins.sh
+
+# Cross-arch via Docker (default linux/amd64 for GHA / s3.terp.network).
+ci-build-docker:
+    scripts/ci/build-bins-docker.sh
