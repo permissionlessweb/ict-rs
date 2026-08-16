@@ -85,7 +85,7 @@ fn resolve_terp_core() -> Result<PathBuf, Box<dyn std::error::Error>> {
         }
     }
     if let Ok(z) = std::env::var("ZK_ROOT") {
-        cands.push(PathBuf::from(z).join("terp-core"));
+        cands.push(PathBuf::from(z.clone()).join("terp-core"));
         cands.push(PathBuf::from(z));
     }
     if let Ok(cwd) = std::env::current_dir() {
