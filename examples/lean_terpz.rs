@@ -574,29 +574,113 @@ fn pubkey_b64_from_show_validator(raw: &str) -> Option<String> {
     pubkey_b64_from_obj(&v)
 }
 
-async fn write_pending_all(
-    chain: &CosmosChain,
-    join: &[String],
-    leave: &[String],
-) -> Result<(), Box<dyn std::error::Error>> {
-    let mut joins = Vec::new();
-    for pk in join {
-        joins.push(serde_json::json!({"pubkey": pk, "weight": 10}));
-    }
-    let body = serde_json::json!({"join": joins, "leave": leave}).to_string();
-    for node in chain.validators().iter().chain(chain.full_nodes().iter()) {
-        for path in [
-            format!("{}/config/lean-pending.json", node.home_dir),
-            "/terpd/.terpd/config/lean-pending.json".to_string(),
-        ] {
-            let cmd = format!("mkdir -p $(dirname {path}) && cat > {path} << 'EOF'\n{body}\nEOF");
-            let out = node.exec_raw(&["sh", "-c", &cmd], &[]).await?;
-            if out.exit_code != 0 {
-                return Err(format!("write pending {path} on {}: {}", node.hostname, out.stderr_str()).into());
-            }
+fn encode_join(period: u64, subject: &[u8], weight: i64) -> Vec<u8> {
+    let subj = if subject.len() > 255 { &subject[..255] } else { subject };
+    let mut out = b"JOIN".to_vec();
+    out.push(1);
+    out.extend_from_slice(&period.to_be_bytes());
+    out.push(subj.len() as u8);
+    out.extend_from_slice(subj);
+    out.extend_from_slice(&(weight as u64).to_be_bytes());
+    out
+}
+
+fn encode_leave(period: u64, subject: &[u8]) -> Vec<u8> {
+    let subj = if subject.len() > 255 { &subject[..255] } else { subject };
+    let mut out = b"LEAV".to_vec();
+    out.push(1);
+    out.extend_from_slice(&period.to_be_bytes());
+    out.push(subj.len() as u8);
+    out.extend_from_slice(subj);
+    out
+}
+
+fn to_hex(b: &[u8]) -> String {
+    b.iter().map(|x| format!("{x:02x}")).collect()
+}
+
+fn decode_pk(b64: &str) -> Result<Vec<u8>, Box<dyn std::error::Error>> {
+    fn d(c: u8) -> Option<u8> {
+        match c {
+            b'A'..=b'Z' => Some(c - b'A'),
+            b'a'..=b'z' => Some(c - b'a' + 26),
+            b'0'..=b'9' => Some(c - b'0' + 52),
+            b'+' => Some(62),
+            b'/' => Some(63),
+            _ => None,
         }
     }
-    println!("  [churn] wrote lean-pending join={} leave={}", join.len(), leave.len());
+    let s: Vec<u8> = b64.trim().bytes().filter(|c| *c != b'=' && !c.is_ascii_whitespace()).collect();
+    let mut out = Vec::new();
+    let mut i = 0;
+    while i < s.len() {
+        let a = d(s[i]).ok_or("b64")?;
+        let b = if i + 1 < s.len() { d(s[i + 1]).ok_or("b64")? } else { 0 };
+        let c = if i + 2 < s.len() { d(s[i + 2]).unwrap_or(0) } else { 0 };
+        let e = if i + 3 < s.len() { d(s[i + 3]).unwrap_or(0) } else { 0 };
+        out.push((a << 2) | (b >> 4));
+        if i + 2 < s.len() {
+            out.push((b << 4) | (c >> 2));
+        }
+        if i + 3 < s.len() {
+            out.push((c << 6) | e);
+        }
+        i += 4;
+    }
+    Ok(out)
+}
+
+async fn broadcast_raw(
+    chain: &CosmosChain,
+    raw: &[u8],
+) -> Result<String, Box<dyn std::error::Error>> {
+    let hex = to_hex(raw);
+    let cmd = format!(
+        r#"curl -sS \"http://127.0.0.1:26657/broadcast_tx_sync?tx=0x{hex}\" || wget -qO- \"http://127.0.0.1:26657/broadcast_tx_sync?tx=0x{hex}\""#
+    );
+    let out = chain.validators()[0]
+        .exec_raw(&["sh", "-c", &cmd], &[])
+        .await?;
+    Ok(out.stdout_str().to_string() + out.stderr_str())
+}
+
+fn tx_ok(resp: &str) -> bool {
+    let v: serde_json::Value = serde_json::from_str(resp.trim()).unwrap_or(serde_json::Value::Null);
+    let code = v
+        .pointer("/result/code")
+        .or_else(|| v.get("code"))
+        .and_then(|c| c.as_u64())
+        .unwrap_or(99);
+    code == 0
+}
+
+async fn broadcast_joins(
+    chain: &CosmosChain,
+    pks: &[String],
+    period: u64,
+) -> Result<(), Box<dyn std::error::Error>> {
+    for pk in pks {
+        let subj = decode_pk(pk)?;
+        let resp = broadcast_raw(chain, &encode_join(period, &subj, 10)).await?;
+        println!("  [churn] JOIN {}...", resp.chars().take(120).collect::<String>());
+        if !tx_ok(&resp) {
+            return Err(format!("JOIN rejected (need terpz-lean @94c61e6+): {resp}").into());
+        }
+    }
+    Ok(())
+}
+
+async fn broadcast_leave(
+    chain: &CosmosChain,
+    pk: &str,
+    period: u64,
+) -> Result<(), Box<dyn std::error::Error>> {
+    let subj = decode_pk(pk)?;
+    let resp = broadcast_raw(chain, &encode_leave(period, &subj)).await?;
+    println!("  [churn] LEAV {}...", resp.chars().take(120).collect::<String>());
+    if !tx_ok(&resp) {
+        return Err(format!("LEAV rejected (need terpz-lean @94c61e6+): {resp}").into());
+    }
     Ok(())
 }
 
@@ -623,7 +707,7 @@ async fn outstanding_amount(
 }
 
 /// 2 genesis validators, 2 full-nodes create-validator in the same block,
-/// Lean pending join; then one genesis val leaves (Lean leave + unbond);
+/// Committed JOIN txs; then one genesis val LEAV + unbond;
 /// rewards must not grow for the leaver; remaining val still accrues (delegators).
 async fn workflow_churn(chain: &mut CosmosChain) -> Result<(), Box<dyn std::error::Error>> {
     use ict_rs::tx::TxOptions;
@@ -711,7 +795,7 @@ async fn workflow_churn(chain: &mut CosmosChain) -> Result<(), Box<dyn std::erro
     }
     wait_for_blocks(chain, 2).await?;
 
-    write_pending_all(chain, &join_pks, &[]).await?;
+    broadcast_joins(chain, &join_pks, 0).await?;
     wait_for_blocks(chain, 3).await?;
 
     let set = query_json(chain, &["leanval", "bonded-set", "0"]).await;
@@ -767,7 +851,7 @@ async fn workflow_churn(chain: &mut CosmosChain) -> Result<(), Box<dyn std::erro
     let before_stay = outstanding_amount(chain, &stay_oper).await.unwrap_or(0.0);
     println!("  [churn] outstanding before leave stay={before_stay} leave={before_leave}");
 
-    write_pending_all(chain, &join_pks, &[leave_pk]).await?;
+    broadcast_leave(chain, &leave_pk, 0).await?;
 
     let unbond = leave_node
         .exec_tx(&[
