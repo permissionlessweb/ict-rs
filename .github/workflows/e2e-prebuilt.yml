@@ -47,8 +47,12 @@ jobs:
           docker image load -i /tmp/terp-prebuilt/terp-core-local-linux-amd64.tar
           docker image inspect terpnetwork/terp-core:local >/dev/null
 
+      - name: Fetch polytone wasm (MinIO)
+        run: bash scripts/ci/fetch-polytone-wasm.sh "${{ github.workspace }}"
+
       - name: Run suite
         env:
+          TERP_CORE: ${{ github.workspace }}
           TERP_IMAGE_REPO: terpnetwork/terp-core
           TERP_IMAGE_VERSION: local
           ICT_CI_BIN_DIR: /tmp/ict-prebuilt/examples
