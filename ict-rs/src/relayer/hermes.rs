@@ -823,7 +823,7 @@ impl RelayerCommander for HermesCommander {
     fn default_image(&self) -> DockerImage {
         DockerImage {
             repository: "ghcr.io/informalsystems/hermes".to_string(),
-            version: "1.13.2".to_string(),
+            version: "1.13.1".to_string(),
             uid_gid: Some("1000:1000".to_string()),
         }
     }
