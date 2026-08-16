@@ -793,6 +793,32 @@ impl CosmosChain {
         );
     }
 
+    /// Run `<bin> query ... --home <home> --output json` and parse stdout.
+    ///
+    /// This is the supported way to query a Cosmos node. [`Chain::exec`] is raw
+    /// docker-exec (no binary prefix) and is not a CLI helper.
+    pub async fn query_json(&self, args: &[&str]) -> Result<serde_json::Value> {
+        let mut cmd: Vec<&str> = Vec::with_capacity(args.len() + 3);
+        cmd.push("query");
+        cmd.extend_from_slice(args);
+        if !args.iter().any(|a| *a == "--output") {
+            cmd.extend_from_slice(&["--output", "json"]);
+        }
+        let out = self.chain_exec(&cmd).await?;
+        if out.exit_code != 0 {
+            return Err(IctError::ExecFailed {
+                exit_code: out.exit_code,
+                stderr: format!("query {:?} failed: {}", args, out.stderr_str()),
+            });
+        }
+        crate::cli::parse_query_response(&out)
+    }
+
+    /// Run a signed `<bin> tx ...` on the primary node with default gas flags.
+    pub async fn tx(&self, args: &[&str]) -> Result<crate::tx::ExecOutput> {
+        self.chain_exec_tx(args).await
+    }
+
     /// Recreate containers with the current image and restart the chain.
     ///
     /// Call after [`upgrade_version`]. Preserves data volumes so chain state
@@ -828,10 +854,12 @@ impl CosmosChain {
                 _ => {
                     attempts += 1;
                     if attempts > 60 {
+                        let log = primary.read_chain_log(80).await;
                         return Err(IctError::Chain {
                             chain_id: self.cfg.chain_id.clone(),
                             source: anyhow::anyhow!(
-                                "chain did not resume after upgrade within 60 seconds"
+                                "chain did not resume after upgrade within 60 seconds. chain.log:
+{log}"
                             ),
                         });
                     }
@@ -1078,10 +1106,9 @@ impl Chain for CosmosChain {
                     let _ = self.runtime.remove_container(&stale).await;
                 }
             }
-            // Remove ALL orphaned ict-rs networks, not just this test's.
-            // Safe because integration tests run sequentially (--test-threads=1),
-            // so no other test should have an active network.
-            let _ = self.runtime.remove_networks_by_prefix("ict-").await;
+            // Do not wipe every ict-* network here. Interchain::build shares one
+            // network across chains and the relayer; a prefix wipe disconnects
+            // already-started siblings and breaks Hermes DNS to chain hostnames.
         }
         let network_id = self.runtime.create_network(&network_name).await?;
         self.network_id = Some(network_id);

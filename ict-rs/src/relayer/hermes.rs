@@ -824,12 +824,13 @@ impl RelayerCommander for HermesCommander {
         DockerImage {
             repository: "ghcr.io/informalsystems/hermes".to_string(),
             version: "1.13.1".to_string(),
-            uid_gid: Some("1000:1000".to_string()),
+            // informal systems hermes 1.13.1 image runs as uid/gid 2000 (user hermes)
+            uid_gid: Some("2000:2000".to_string()),
         }
     }
 
     fn docker_user(&self) -> &str {
-        "1000:1000"
+        "2000:2000"
     }
 
     fn home_dir(&self) -> &str {
