@@ -658,7 +658,9 @@ async fn workflow_membership(
     }
 
     let mut after_join = 0;
-    for _ in 0..12 {
+    for _ in 0..16 {
+        let _ = broadcast_raw(chain, &encode_join(period, &subj0, 10)).await;
+        let _ = broadcast_raw(chain, &encode_join(period, &subj1, 10)).await;
         wait_for_blocks(chain, 1).await?;
         after_join = bonded_rows(&query_json(chain, &["leanval", "bonded-set", "0"]).await?);
         if after_join >= bs_before + 2 {
