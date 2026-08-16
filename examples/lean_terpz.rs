@@ -158,10 +158,6 @@ fn collect_genesis_subjects(genesis: &serde_json::Value) -> Vec<serde_json::Valu
         }
     }
 
-    if !subjects.is_empty() {
-        return subjects;
-    }
-
     if let Some(txs) = genesis
         .pointer("/app_state/genutil/gen_txs")
         .and_then(|v| v.as_array())
@@ -191,6 +187,13 @@ fn collect_genesis_subjects(genesis: &serde_json::Value) -> Vec<serde_json::Valu
         }
     }
 
+    let mut seen = std::collections::BTreeSet::new();
+    subjects.retain(|s| {
+        s.get("pubkey")
+            .and_then(|pk| pk.as_str())
+            .map(|pk| seen.insert(pk.to_string()))
+            .unwrap_or(false)
+    });
     subjects
 }
 
@@ -218,6 +221,10 @@ fn modify_genesis(_cfg: &ChainConfig, raw: Vec<u8>) -> IctResult<Vec<u8>> {
                     .into(),
             ));
         }
+        eprintln!(
+            "lean_terpz modify_genesis: owns=true genesis_subjects={}",
+            subjects.len()
+        );
         genesis["app_state"]["leanval"] = serde_json::json!({
             "leanval_owns_valset": true,
             "genesis_subjects": subjects,
@@ -315,8 +322,18 @@ async fn workflow_staking(chain: &CosmosChain, nvals: usize) -> Result<(), Box<d
         list.len(),
         bonded
     );
-    if list.len() < nvals {
+    let owns = owns_valset() || workflow_on(&enabled_workflows(), "lean-owns");
+    if !owns && list.len() < nvals {
         return Err(format!("staking validators {} < {nvals}", list.len()).into());
+    }
+    if owns && list.is_empty() {
+        return Err("owns: staking has zero validators".into());
+    }
+    if owns && list.len() < nvals {
+        println!(
+            "  [staking] owns=true: x/staking count {} < {nvals} Comet nodes (Lean VP is BondedSet)",
+            list.len()
+        );
     }
     if bonded == 0 {
         return Err("no bonded validators".into());
