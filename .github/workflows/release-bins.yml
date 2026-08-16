@@ -22,9 +22,8 @@ jobs:
       - name: Fetch path-deps
         run: bash ict-rs/scripts/ci/fetch-path-deps.sh
 
-      - name: Slim workspace to ict-ci crates
-        working-directory: ict-rs
-        run: sed -i 's/"ict-rs", "ict-rs-codegen", "ict-rs-cw-orch", "ict-rs-derive"/"ict-rs", "ict-rs-derive"/' Cargo.toml
+      - name: Slim workspaces for bin-only compile
+        run: bash ict-rs/scripts/ci/slim-for-bins.sh
 
       - name: Rust toolchain
         uses: dtolnay/rust-toolchain@master
