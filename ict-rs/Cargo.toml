@@ -70,7 +70,9 @@ toml = "0.8"
 tracing = "0.1"
 
 # Derive macros
-cw-orch-core = { path = "../../cw-orchestrator/packages/cw-orch-core", package = "cw-orch-core", features = ["terp"] }
+cw-orch-core = { path = "../../cw-orchestrator/packages/cw-orch-core", package = "cw-orch-core", default-features = false, features = ["terp"] }
+# Force halo2-compatible rayon when a sibling crate enables zk
+rayon = "=1.10.0"
 ict-rs-derive = { path = "../ict-rs-derive" }
 
 [dev-dependencies]
@@ -86,6 +88,7 @@ sha2 = "0.10"
 tar = "0.4"
 tempfile = { version = "3", optional = false }
 terp-rs = { path = "../../terp-rs/crates/sdk", package = "terp-rs", features = ["rpc"] }
+zk-cosmwasm = { path = "../../cosmwasm/packages/zk", default-features = false }
 tokio = { version = "1", features = ["full"] }
 tokio-test = "0.4"
 tracing-subscriber = { version = "0.3", features = ["env-filter"] }
@@ -228,3 +231,8 @@ path = "src/bin/ict-ci.rs"
 name = "lean_terpz"
 path = "../examples/lean_terpz.rs"
 required-features = ["docker", "terp"]
+
+[[example]]
+name = "bulk_memory_gas"
+path = "../examples/bulk_memory_gas.rs"
+required-features = ["docker"]
