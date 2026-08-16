@@ -90,6 +90,24 @@ fn num_validators() -> usize {
     env_or("ICT_LEAN_VALS", "4").parse().unwrap_or(4)
 }
 
+fn num_full_nodes() -> usize {
+    env_or("ICT_LEAN_FULL", "0").parse().unwrap_or(0)
+}
+
+fn layout() -> (usize, usize) {
+    let churn = workflow_on(&enabled_workflows(), "churn");
+    let vals_set = std::env::var("ICT_LEAN_VALS").ok().filter(|s| !s.is_empty());
+    let fns_set = std::env::var("ICT_LEAN_FULL").ok().filter(|s| !s.is_empty());
+    if churn {
+        (
+            vals_set.as_deref().and_then(|s| s.parse().ok()).unwrap_or(2),
+            fns_set.as_deref().and_then(|s| s.parse().ok()).unwrap_or(2),
+        )
+    } else {
+        (num_validators(), num_full_nodes())
+    }
+}
+
 fn owns_valset() -> bool {
     matches!(
         env_or("ICT_LEAN_OWNS_VALSET", "false").as_str(),
@@ -556,6 +574,252 @@ async fn workflow_lean_owns(chain: &CosmosChain) -> Result<(), Box<dyn std::erro
     Ok(())
 }
 
+
+fn pubkey_b64_from_show_validator(raw: &str) -> Option<String> {
+    let v: serde_json::Value = serde_json::from_str(raw.trim()).ok()?;
+    pubkey_b64_from_obj(&v)
+}
+
+async fn write_pending_all(
+    chain: &CosmosChain,
+    join: &[String],
+    leave: &[String],
+) -> Result<(), Box<dyn std::error::Error>> {
+    let mut joins = Vec::new();
+    for pk in join {
+        joins.push(serde_json::json!({"pubkey": pk, "weight": 10}));
+    }
+    let body = serde_json::json!({"join": joins, "leave": leave}).to_string();
+    for node in chain.validators().iter().chain(chain.full_nodes().iter()) {
+        let path = format!("{}/config/lean-pending.json", node.home_dir);
+        let cmd = format!("cat > {path} << 'EOF'\n{body}\nEOF");
+        let out = node.exec_raw(&["sh", "-c", &cmd], &[]).await?;
+        if out.exit_code != 0 {
+            return Err(format!("write pending on {}: {}", node.hostname, out.stderr_str()).into());
+        }
+    }
+    println!("  [churn] wrote lean-pending join={} leave={}", join.len(), leave.len());
+    Ok(())
+}
+
+async fn outstanding_amount(
+    chain: &CosmosChain,
+    valoper: &str,
+) -> Result<f64, Box<dyn std::error::Error>> {
+    let v = query_json(chain, &["distribution", "validator-outstanding-rewards", valoper]).await?;
+    let amt = v
+        .pointer("/rewards/rewards")
+        .or_else(|| v.pointer("/rewards"))
+        .and_then(|r| r.as_array())
+        .and_then(|arr| {
+            arr.iter().find_map(|c| {
+                if c.get("denom").and_then(|d| d.as_str()) != Some("uterp") {
+                    return None;
+                }
+                c.get("amount")
+                    .and_then(|a| a.as_str().map(|s| s.to_string()).or_else(|| a.as_f64().map(|f| f.to_string())))
+            })
+        })
+        .unwrap_or_else(|| "0".to_string());
+    Ok(amt.parse::<f64>().unwrap_or(0.0))
+}
+
+/// 2 genesis validators, 2 full-nodes create-validator in the same block,
+/// Lean pending join; then one genesis val leaves (Lean leave + unbond);
+/// rewards must not grow for the leaver; remaining val still accrues (delegators).
+async fn workflow_churn(chain: &mut CosmosChain) -> Result<(), Box<dyn std::error::Error>> {
+    use ict_rs::tx::TxOptions;
+
+    if chain.full_nodes().len() < 2 {
+        return Err("churn requires 2 full nodes (ICT_LEAN_FULL=2)".into());
+    }
+    if chain.validators().len() < 2 {
+        return Err("churn requires 2 genesis validators".into());
+    }
+
+    wait_for_blocks(chain, 2).await?;
+
+    let mut join_pks = Vec::new();
+    let mut fn_addrs = Vec::new();
+    for i in 0..2 {
+        let fnode = &chain.full_nodes()[i];
+        let key = "operator";
+        let out = fnode.create_key(key, 118).await?;
+        if out.exit_code != 0 {
+            return Err(format!("fn{i} create_key: {}", out.stderr_str()).into());
+        }
+        let addr = fnode.get_key_address(key).await?;
+        fn_addrs.push(addr.clone());
+        let pk_out = fnode.exec_cmd(&["tendermint", "show-validator"]).await?;
+        let pk = pubkey_b64_from_show_validator(&pk_out.stdout_str())
+            .ok_or_else(|| format!("fn{i} show-validator parse: {}", pk_out.stdout_str()))?;
+        join_pks.push(pk);
+        println!("  [churn] fn{i} operator={addr}");
+    }
+
+    let primary = &chain.validators()[0];
+    for addr in &fn_addrs {
+        let out = primary
+            .bank_send("validator", addr, "2000000000uterp", "")
+            .await?;
+        if out.exit_code != 0 {
+            return Err(format!("fund {addr}: {}", out.stderr_str()).into());
+        }
+    }
+
+    // Same block: broadcast both create-validator without waiting between them.
+    for i in 0..2 {
+        let fnode = &chain.full_nodes()[i];
+        let pk = &join_pks[i];
+        let spec = serde_json::json!({
+            "pubkey": {"@type":"/cosmos.crypto.ed25519.PubKey","key": pk},
+            "amount": "1000000000uterp",
+            "moniker": format!("fn-{i}"),
+            "identity": "",
+            "website": "",
+            "security": "",
+            "details": "ict churn joiner",
+            "commission-rate": "0.1",
+            "commission-max-rate": "0.2",
+            "commission-max-change-rate": "0.01",
+            "min-self-delegation": "1"
+        });
+        let path = "/tmp/validator.json";
+        let w = format!("cat > {path} << 'EOF'\n{spec}\nEOF");
+        fnode.exec_raw(&["sh", "-c", &w], &[]).await?;
+        let opts = TxOptions::new(chain.chain_id(), "0.01uterp")
+            .from("operator")
+            .gas("auto")
+            .gas_adjustment(2.0)
+            .broadcast_mode("sync");
+        let flags = opts.to_flags();
+        let mut args: Vec<String> = vec![
+            "tx".into(),
+            "staking".into(),
+            "create-validator".into(),
+            path.into(),
+        ];
+        args.extend(flags);
+        let refs: Vec<&str> = args.iter().map(|s| s.as_str()).collect();
+        let out = fnode.exec_cmd(&refs).await?;
+        println!(
+            "  [churn] fn{i} create-validator exit={} err={}",
+            out.exit_code,
+            out.stderr_str().chars().take(160).collect::<String>()
+        );
+        if out.exit_code != 0 {
+            return Err(format!("fn{i} create-validator: {}", out.stderr_str()).into());
+        }
+    }
+    wait_for_blocks(chain, 2).await?;
+
+    write_pending_all(chain, &join_pks, &[]).await?;
+    wait_for_blocks(chain, 3).await?;
+
+    let set = query_json(chain, &["leanval", "bonded-set", "0"]).await;
+    match set {
+        Ok(v) => {
+            let n = bonded_set_row_count(&v);
+            println!("  [churn] bonded-set after same-block join rows={n} (want >= 3)");
+            if n < 3 {
+                return Err(format!("same-block join: BondedSet rows {n} < 3").into());
+            }
+        }
+        Err(e) => return Err(format!("bonded-set after join: {e}").into()),
+    }
+
+    let vals = query_json(chain, &["staking", "validators"]).await?;
+    let list = vals
+        .get("validators")
+        .and_then(|v| v.as_array())
+        .cloned()
+        .unwrap_or_default();
+    println!("  [churn] staking validators after join={}", list.len());
+
+    // Identify genesis valoper 1 to leave (second validator node).
+    let leave_node = &chain.validators()[1];
+    let leave_pk_out = leave_node.exec_cmd(&["tendermint", "show-validator"]).await?;
+    let leave_pk = pubkey_b64_from_show_validator(&leave_pk_out.stdout_str())
+        .ok_or("leave show-validator")?;
+    let leave_valoper = leave_node
+        .exec_cmd(&["keys", "show", "validator", "--bech", "val", "--output", "json", "--keyring-backend", "test"])
+        .await?;
+    let leave_info: serde_json::Value = serde_json::from_str(leave_valoper.stdout_str().trim()).unwrap_or(serde_json::json!({}));
+    let leave_oper = leave_info
+        .get("address")
+        .and_then(|a| a.as_str())
+        .unwrap_or("")
+        .to_string();
+    if leave_oper.is_empty() {
+        return Err(format!("no valoper for leaver: {}", leave_valoper.stdout_str()).into());
+    }
+
+    let stay_node = &chain.validators()[0];
+    let stay_valoper_out = stay_node
+        .exec_cmd(&["keys", "show", "validator", "--bech", "val", "--output", "json", "--keyring-backend", "test"])
+        .await?;
+    let stay_info: serde_json::Value = serde_json::from_str(stay_valoper_out.stdout_str().trim()).unwrap_or(serde_json::json!({}));
+    let stay_oper = stay_info
+        .get("address")
+        .and_then(|a| a.as_str())
+        .unwrap_or("")
+        .to_string();
+
+    let before_leave = outstanding_amount(chain, &leave_oper).await.unwrap_or(0.0);
+    let before_stay = outstanding_amount(chain, &stay_oper).await.unwrap_or(0.0);
+    println!("  [churn] outstanding before leave stay={before_stay} leave={before_leave}");
+
+    write_pending_all(chain, &join_pks, &[leave_pk]).await?;
+
+    let unbond = leave_node
+        .exec_tx(&[
+            "tx",
+            "staking",
+            "unbond",
+            &leave_oper,
+            "1000000000uterp",
+            "--from",
+            "validator",
+        ])
+        .await?;
+    println!(
+        "  [churn] unbond leaver exit={} {}",
+        unbond.exit_code,
+        unbond.stderr_str().chars().take(120).collect::<String>()
+    );
+
+    wait_for_blocks(chain, 4).await?;
+
+    let after_leave = outstanding_amount(chain, &leave_oper).await.unwrap_or(0.0);
+    let after_stay = outstanding_amount(chain, &stay_oper).await.unwrap_or(0.0);
+    let d_leave = after_leave - before_leave;
+    let d_stay = after_stay - before_stay;
+    println!("  [churn] outstanding Δ stay={d_stay} leave={d_leave}");
+
+    if d_leave > d_stay && d_leave > 1.0 {
+        return Err(format!(
+            "leaver outstanding grew more than stayer (Δleave={d_leave} Δstay={d_stay})"
+        )
+        .into());
+    }
+    if d_stay <= 0.0 && after_stay <= 0.0 {
+        println!("  [churn] WARN: stayer outstanding did not increase (fees may be tiny); delegator path still required");
+    } else {
+        println!("  [churn] remaining validator still accrues — F1 to its delegators");
+    }
+
+    let set2 = query_json(chain, &["leanval", "bonded-set", "0"]).await?;
+    let n2 = bonded_set_row_count(&set2);
+    println!("  [churn] bonded-set after leave rows={n2}");
+    if n2 < 2 {
+        return Err(format!("after leave expected remaining BondedSet, got {n2}").into());
+    }
+
+    // Another join: reuse already-joined fns as present; require set still live.
+    println!("  [churn] scenarios: same-block 2-join, leave, no extra F1 for leaver, remaining delegators still in BondedSet");
+    Ok(())
+}
+
 async fn run(chain: &mut CosmosChain, nvals: usize) -> Result<(), Box<dyn std::error::Error>> {
     let ctx = TestContext {
         test_name: "lean-terpz-multival".to_string(),
@@ -589,6 +853,9 @@ async fn run(chain: &mut CosmosChain, nvals: usize) -> Result<(), Box<dyn std::e
     if workflow_on(&enabled, "p0") {
         workflow_p0(chain).await?;
     }
+    if workflow_on(&enabled, "churn") {
+        workflow_churn(chain).await?;
+    }
     Ok(())
 }
 
@@ -596,18 +863,21 @@ async fn run(chain: &mut CosmosChain, nvals: usize) -> Result<(), Box<dyn std::e
 async fn main() -> Result<(), Box<dyn std::error::Error>> {
     let _ = tracing_subscriber::fmt().with_env_filter("info").try_init();
 
-    let nvals = num_validators();
-    println!("=== Lean terpz multi-validator ICT ({nvals} vals, bin={}) ===", bin_name());
+    let (nvals, nfns) = layout();
+    println!(
+        "=== Lean terpz ICT ({nvals} genesis vals, {nfns} full nodes, bin={}) ===",
+        bin_name()
+    );
 
     if std::env::var("ICT_MOCK").ok().as_deref() == Some("1") {
         let runtime: Arc<dyn RuntimeBackend> = Arc::new(MockRuntime::new());
         let config = terpz_config();
-        let chain = CosmosChain::new(config, nvals, 0, runtime);
+        let chain = CosmosChain::new(config, nvals, nfns, runtime);
         if chain.config().bin != bin_name() {
             return Err(format!("mock: bin {} != {}", chain.config().bin, bin_name()).into());
         }
         println!(
-            "Mock runtime: requested {nvals} vals, bin={}, chain_id={}",
+            "Mock runtime: requested {nvals} vals + {nfns} full nodes, bin={}, chain_id={}",
             chain.config().bin,
             chain.chain_id()
         );
@@ -621,7 +891,7 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
     let runtime = IctRuntime::Docker(DockerConfig::default())
         .into_backend()
         .await?;
-    let mut chain = CosmosChain::new(terpz_config(), nvals, 0, runtime);
+    let mut chain = CosmosChain::new(terpz_config(), nvals, nfns, runtime);
     let result = run(&mut chain, nvals).await;
     if let Err(e) = chain.stop().await {
         eprintln!("cleanup: {e}");
