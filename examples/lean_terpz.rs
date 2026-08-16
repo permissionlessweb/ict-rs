@@ -591,11 +591,15 @@ async fn write_pending_all(
     }
     let body = serde_json::json!({"join": joins, "leave": leave}).to_string();
     for node in chain.validators().iter().chain(chain.full_nodes().iter()) {
-        let path = format!("{}/config/lean-pending.json", node.home_dir);
-        let cmd = format!("cat > {path} << 'EOF'\n{body}\nEOF");
-        let out = node.exec_raw(&["sh", "-c", &cmd], &[]).await?;
-        if out.exit_code != 0 {
-            return Err(format!("write pending on {}: {}", node.hostname, out.stderr_str()).into());
+        for path in [
+            format!("{}/config/lean-pending.json", node.home_dir),
+            "/terpd/.terpd/config/lean-pending.json".to_string(),
+        ] {
+            let cmd = format!("mkdir -p $(dirname {path}) && cat > {path} << 'EOF'\n{body}\nEOF");
+            let out = node.exec_raw(&["sh", "-c", &cmd], &[]).await?;
+            if out.exit_code != 0 {
+                return Err(format!("write pending {path} on {}: {}", node.hostname, out.stderr_str()).into());
+            }
         }
     }
     println!("  [churn] wrote lean-pending join={} leave={}", join.len(), leave.len());
