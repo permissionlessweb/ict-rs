@@ -3740,9 +3740,12 @@ dependencies = [
  "cw-orch-daemon",
  "ict-rs",
  "o-line-sdl",
+ "rustls 0.23.43",
+ "serde_json",
  "thiserror 2.0.20",
  "tokio",
  "tracing",
+ "tracing-subscriber",
 ]
 
 [[package]]

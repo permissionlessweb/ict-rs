@@ -124,113 +124,6 @@ async fn key_address(
     Ok(addr)
 }
 
-/// Store a wasm contract on-chain using chain_exec directly.
-/// Returns the code_id from the tx result.
-async fn store_contract(
-    chain: &dyn Chain,
-    key_name: &str,
-    container_wasm_path: &str,
-) -> Result<String, Box<dyn std::error::Error>> {
-    let output = chain.chain_exec(&[
-        "tx", "wasm", "store", container_wasm_path,
-        "--from", key_name,
-        "--gas-prices", "0uterp",
-        "--chain-id", chain.chain_id(),
-        "--keyring-backend", "test",
-        "--gas", "auto",
-        "--gas-adjustment", "2.0",
-        "--broadcast-mode", "sync",
-        "--output", "json",
-        "-y",
-    ]).await?;
-
-    if output.exit_code != 0 {
-        return Err(format!("store failed: {}", output.stderr_str()).into());
-    }
-
-    let json: serde_json::Value = serde_json::from_str(output.stdout_str().trim())
-        .unwrap_or(serde_json::Value::Null);
-    let code = json["code"].as_u64().unwrap_or(999);
-    if code != 0 {
-        return Err(format!("store tx rejected (code {}): {}",
-            code, json["raw_log"].as_str().unwrap_or("unknown")).into());
-    }
-
-    let txhash = json["txhash"].as_str().unwrap_or("").to_string();
-    println!("  Store tx: {}", txhash);
-
-    // Wait for tx to be included
-    wait_for_blocks(chain, 2).await?;
-
-    // Query the tx to get code_id from events
-    let tx_output = chain.chain_exec(&[
-        "query", "tx", &txhash, "--output", "json",
-    ]).await?;
-
-    let tx_json: serde_json::Value = serde_json::from_str(tx_output.stdout_str().trim())
-        .unwrap_or(serde_json::Value::Null);
-
-    // Extract code_id from events
-    let code_id = extract_event_attr(&tx_json, "store_code", "code_id")
-        .unwrap_or_else(|| "1".to_string());
-
-    Ok(code_id)
-}
-
-/// Instantiate a contract. Returns the contract address.
-async fn instantiate_contract(
-    chain: &dyn Chain,
-    key_name: &str,
-    code_id: &str,
-    msg: &str,
-    label: &str,
-) -> Result<String, Box<dyn std::error::Error>> {
-    let output = chain.chain_exec(&[
-        "tx", "wasm", "instantiate", code_id, msg,
-        "--label", label,
-        "--no-admin",
-        "--from", key_name,
-        "--gas-prices", "0uterp",
-        "--chain-id", chain.chain_id(),
-        "--keyring-backend", "test",
-        "--gas", "auto",
-        "--gas-adjustment", "2.0",
-        "--broadcast-mode", "sync",
-        "--output", "json",
-        "-y",
-    ]).await?;
-
-    if output.exit_code != 0 {
-        return Err(format!("instantiate failed: {}", output.stderr_str()).into());
-    }
-
-    let json: serde_json::Value = serde_json::from_str(output.stdout_str().trim())
-        .unwrap_or(serde_json::Value::Null);
-    let code = json["code"].as_u64().unwrap_or(999);
-    if code != 0 {
-        return Err(format!("instantiate tx rejected (code {}): {}",
-            code, json["raw_log"].as_str().unwrap_or("unknown")).into());
-    }
-
-    wait_for_blocks(chain, 2).await?;
-
-    // Query contract address by code_id
-    let q_output = chain.chain_exec(&[
-        "query", "wasm", "list-contract-by-code", code_id, "--output", "json",
-    ]).await?;
-    let q_json: serde_json::Value = serde_json::from_str(q_output.stdout_str().trim())
-        .map_err(|e| format!("contract query failed: {e}"))?;
-
-    let contract_addr = q_json["contracts"]
-        .as_array()
-        .and_then(|arr| arr.last())
-        .and_then(|v| v.as_str())
-        .ok_or("no contract found")?
-        .to_string();
-
-    Ok(contract_addr)
-}
-
 /// Extract an attribute value from tx events.
 fn extract_event_attr(tx_json: &serde_json::Value, event_type: &str, attr_key: &str) -> Option<String> {
     // Try logs.events path
@@ -322,8 +215,352 @@ fn base64_encode(data: &[u8]) -> String {
     result
 }
 
+
+/// Wait until `query tx` sees `txhash`, one produced block at a time.
+async fn wait_until_tx(
+    chain: &dyn Chain,
+    txhash: &str,
+) -> Result<serde_json::Value, Box<dyn std::error::Error>> {
+    if txhash.is_empty() {
+        return Err("empty txhash".into());
+    }
+    let start = chain.height().await.unwrap_or(0);
+    loop {
+        let tx_output = chain
+            .chain_exec(&["query", "tx", txhash, "--output", "json"])
+            .await;
+        if let Ok(out) = tx_output {
+            if let Ok(tx_json) = serde_json::from_str::<serde_json::Value>(out.stdout_str().trim()) {
+                if tx_json.get("height").is_some() && !tx_json.get("height").unwrap().is_null() {
+                    let code = tx_json["code"].as_u64().unwrap_or(0);
+                    if code != 0 {
+                        return Err(format!(
+                            "tx {txhash} code={code}: {}",
+                            tx_json["raw_log"].as_str().unwrap_or("")
+                        )
+                        .into());
+                    }
+                    return Ok(tx_json);
+                }
+            }
+        }
+        wait_for_blocks(chain, 1).await?;
+        let h = chain.height().await.unwrap_or(0);
+        if h > start + 15 {
+            return Err(format!("tx {txhash} not included by height {h} (start {start})").into());
+        }
+    }
+}
+
+fn parse_account_seq(j: &serde_json::Value) -> Option<(u64, u64)> {
+    let candidates = [
+        j,
+        &j["account"],
+        &j["account"]["value"],
+        &j["account"]["base_account"],
+        &j["account"]["value"]["base_vesting_account"]["base_account"],
+    ];
+    for acc in candidates {
+        let num = acc["account_number"]
+            .as_u64()
+            .or_else(|| acc["account_number"].as_str().and_then(|s| s.parse().ok()));
+        // New accounts often omit sequence in amino JSON; that means 0.
+        let seq = acc["sequence"]
+            .as_u64()
+            .or_else(|| acc["sequence"].as_str().and_then(|s| s.parse().ok()))
+            .unwrap_or(0);
+        if let Some(num) = num {
+            return Some((num, seq));
+        }
+    }
+    None
+}
+
+async fn account_number_and_sequence(
+    chain: &dyn Chain,
+    addr: &str,
+) -> Result<(u64, u64), Box<dyn std::error::Error>> {
+    let out = chain
+        .chain_exec(&["query", "auth", "account", addr, "--output", "json"])
+        .await?;
+    let j: serde_json::Value = serde_json::from_str(out.stdout_str().trim())?;
+    parse_account_seq(&j).ok_or_else(|| format!("no sequence in account query: {j}").into())
+}
+
+/// Store each wasm, waiting for inclusion before the next (signer sequence).
+async fn store_contracts_seq(
+    chain: &dyn Chain,
+    key_name: &str,
+    paths: &[(&str, &str)],
+) -> Result<Vec<String>, Box<dyn std::error::Error>> {
+    let mut code_ids = Vec::new();
+    for (label, path) in paths {
+        let output = chain
+            .chain_exec(&[
+                "tx",
+                "wasm",
+                "store",
+                path,
+                "--from",
+                key_name,
+                "--gas-prices",
+                "0uterp",
+                "--chain-id",
+                chain.chain_id(),
+                "--keyring-backend",
+                "test",
+                "--gas",
+                "auto",
+                "--gas-adjustment",
+                "2.0",
+                "--broadcast-mode",
+                "sync",
+                "--output",
+                "json",
+                "-y",
+            ])
+            .await?;
+        if output.exit_code != 0 {
+            return Err(format!("store {label} failed: {}", output.stderr_str()).into());
+        }
+        let json: serde_json::Value = serde_json::from_str(output.stdout_str().trim())
+            .unwrap_or(serde_json::Value::Null);
+        let code = json["code"].as_u64().unwrap_or(999);
+        if code != 0 {
+            return Err(format!(
+                "store {label} rejected (code {code}): {}",
+                json["raw_log"].as_str().unwrap_or("unknown")
+            )
+            .into());
+        }
+        let txhash = json["txhash"].as_str().unwrap_or("").to_string();
+        println!("  Store {label} tx={txhash}");
+        let tx_json = wait_until_tx(chain, &txhash).await?;
+        let code_id = extract_event_attr(&tx_json, "store_code", "code_id")
+            .ok_or_else(|| format!("no code_id for {label} {txhash}"))?;
+        println!("  {label} code_id={code_id}");
+        code_ids.push(code_id);
+    }
+    Ok(code_ids)
+}
+
+async fn instantiate_contracts_seq(
+    chain: &dyn Chain,
+    key_name: &str,
+    specs: &[(String, String, String)],
+) -> Result<Vec<String>, Box<dyn std::error::Error>> {
+    let mut addrs = Vec::new();
+    for (code_id, msg, label) in specs {
+        let output = chain
+            .chain_exec(&[
+                "tx",
+                "wasm",
+                "instantiate",
+                code_id,
+                msg,
+                "--label",
+                label,
+                "--no-admin",
+                "--from",
+                key_name,
+                "--gas-prices",
+                "0uterp",
+                "--chain-id",
+                chain.chain_id(),
+                "--keyring-backend",
+                "test",
+                "--gas",
+                "auto",
+                "--gas-adjustment",
+                "2.0",
+                "--broadcast-mode",
+                "sync",
+                "--output",
+                "json",
+                "-y",
+            ])
+            .await?;
+        if output.exit_code != 0 {
+            return Err(format!("instantiate {label} failed: {}", output.stderr_str()).into());
+        }
+        let json: serde_json::Value = serde_json::from_str(output.stdout_str().trim())
+            .unwrap_or(serde_json::Value::Null);
+        if json["code"].as_u64().unwrap_or(999) != 0 {
+            return Err(format!(
+                "instantiate {label} rejected: {}",
+                json["raw_log"].as_str().unwrap_or("unknown")
+            )
+            .into());
+        }
+        let txhash = json["txhash"].as_str().unwrap_or("").to_string();
+        println!("  Instantiate {label} tx={txhash}");
+        wait_until_tx(chain, &txhash).await?;
+        let q_output = chain
+            .chain_exec(&[
+                "query",
+                "wasm",
+                "list-contract-by-code",
+                code_id,
+                "--output",
+                "json",
+            ])
+            .await?;
+        let q_json: serde_json::Value = serde_json::from_str(q_output.stdout_str().trim())?;
+        let contract_addr = q_json["contracts"]
+            .as_array()
+            .and_then(|arr| arr.last())
+            .and_then(|v| v.as_str())
+            .ok_or_else(|| format!("no contract for {label} code {code_id}"))?
+            .to_string();
+        println!("  {label}: {contract_addr}");
+        addrs.push(contract_addr);
+    }
+    Ok(addrs)
+}
+
+struct Deployed {
+    note_addr: String,
+    voice_addr: String,
+    tester_addr: String,
+}
+
+async fn deploy_one_chain(
+    chain: &dyn Chain,
+    key_name: &str,
+    note_host: &PathBuf,
+    voice_host: &PathBuf,
+    proxy_host: &PathBuf,
+    tester_host: &PathBuf,
+) -> Result<(String, Deployed), Box<dyn std::error::Error>> {
+    chain.create_key(key_name).await?;
+    let user = key_address(chain, key_name).await?;
+    chain
+        .send_funds(
+            "validator",
+            &WalletAmount {
+                address: user.clone(),
+                denom: "uterp".to_string(),
+                amount: 10_000_000_000,
+            },
+        )
+        .await?;
+    wait_until_funded(chain, &user).await?;
+
+    let (note_p, voice_p, proxy_p, tester_p) = tokio::try_join!(
+        copy_wasm_to_chain(chain, note_host, "polytone_note.wasm"),
+        copy_wasm_to_chain(chain, voice_host, "polytone_voice.wasm"),
+        copy_wasm_to_chain(chain, proxy_host, "polytone_proxy.wasm"),
+        copy_wasm_to_chain(chain, tester_host, "polytone_tester.wasm"),
+    )?;
+
+    let codes = store_contracts_seq(
+        chain,
+        key_name,
+        &[
+            ("note", note_p.as_str()),
+            ("voice", voice_p.as_str()),
+            ("proxy", proxy_p.as_str()),
+            ("tester", tester_p.as_str()),
+        ],
+    )
+    .await?;
+    let note_code = &codes[0];
+    let voice_code = &codes[1];
+    let proxy_code = &codes[2];
+    let tester_code = &codes[3];
+
+    let voice_init = format!(
+        r#"{{"proxy_code_id":"{proxy_code}","block_max_gas":"100000000","contract_addr_len":32}}"#
+    );
+    let addrs = instantiate_contracts_seq(
+        chain,
+        key_name,
+        &[
+            (
+                note_code.clone(),
+                r#"{"block_max_gas":"100000000"}"#.to_string(),
+                "polytone-note".to_string(),
+            ),
+            (
+                voice_code.clone(),
+                voice_init,
+                "polytone-voice".to_string(),
+            ),
+            (tester_code.clone(), "{}".to_string(), "polytone-tester".to_string()),
+        ],
+    )
+    .await?;
+    Ok((
+        user,
+        Deployed {
+            note_addr: addrs[0].clone(),
+            voice_addr: addrs[1].clone(),
+            tester_addr: addrs[2].clone(),
+        },
+    ))
+}
+
+async fn wait_until_funded(
+    chain: &dyn Chain,
+    addr: &str,
+) -> Result<(), Box<dyn std::error::Error>> {
+    let start = chain.height().await.unwrap_or(0);
+    loop {
+        let out = chain
+            .chain_exec(&["query", "bank", "balances", addr, "--output", "json"])
+            .await?;
+        if out.stdout_str().contains("uterp") {
+            return Ok(());
+        }
+        wait_for_blocks(chain, 1).await?;
+        if chain.height().await.unwrap_or(0) > start + 10 {
+            return Err(format!("fund to {addr} not visible").into());
+        }
+    }
+}
+
+async fn deploy_polytone_contracts(
+    ic: &Interchain,
+    note_host: &PathBuf,
+    voice_host: &PathBuf,
+    proxy_host: &PathBuf,
+    tester_host: &PathBuf,
+) -> Result<(Deployed, Deployed), Box<dyn std::error::Error>> {
+    let chain_a = ic.get_chain("chain-a").unwrap();
+    let chain_b = ic.get_chain("chain-b").unwrap();
+    println!("--- Deploying contracts (sequential stores per chain) ---");
+    let (_, dep_a) = deploy_one_chain(chain_a, "user-a", note_host, voice_host, proxy_host, tester_host).await?;
+    let (_, dep_b) = deploy_one_chain(chain_b, "user-b", note_host, voice_host, proxy_host, tester_host).await?;
+    Ok((dep_a, dep_b))
+}
+
+
+async fn find_ibc_channel(
+    chain: &dyn Chain,
+    port_id: &str,
+) -> Result<String, Box<dyn std::error::Error>> {
+    let out = chain
+        .chain_exec(&["query", "ibc", "channel", "channels", "--output", "json"])
+        .await?;
+    let j: serde_json::Value = serde_json::from_str(out.stdout_str().trim())?;
+    let chans = j["channels"]
+        .as_array()
+        .ok_or_else(|| format!("no channels array: {j}"))?;
+    for c in chans {
+        if c["port_id"].as_str() == Some(port_id) {
+            let id = c["channel_id"].as_str().unwrap_or("").to_string();
+            let state = c["state"].as_str().unwrap_or("");
+            println!("  on-chain channel {id} port={port_id} state={state}");
+            if !id.is_empty() {
+                return Ok(id);
+            }
+        }
+    }
+    Err(format!("no channel on port {port_id}: {j}").into())
+}
+
 /// Run the polytone test.
-async fn run_test(ic: &mut Interchain) -> Result<(), Box<dyn std::error::Error>> {
+async fn run_test(ic: &mut Interchain, deployed: Option<(Deployed, Deployed)>) -> Result<(), Box<dyn std::error::Error>> {
     let zk_root = resolve_terp_core()?;
 
     // Verify wasm files exist
@@ -345,86 +582,15 @@ async fn run_test(ic: &mut Interchain) -> Result<(), Box<dyn std::error::Error>>
     let chain_b = ic.get_chain("chain-b").unwrap();
 
     // 1. Fund test users
-    println!("\n--- Funding test users ---");
-    chain_a.create_key("user-a").await?;
-    chain_b.create_key("user-b").await?;
-    let user_a_addr = key_address(chain_a, "user-a").await?;
-    let user_b_addr = key_address(chain_b, "user-b").await?;
-    println!("  User A: {}", user_a_addr);
-    println!("  User B: {}", user_b_addr);
-
-    let fund = 10_000_000_000u128;
-    chain_a.send_funds("validator", &WalletAmount {
-        address: user_a_addr.clone(), denom: "uterp".to_string(), amount: fund,
-    }).await?;
-    chain_b.send_funds("validator", &WalletAmount {
-        address: user_b_addr.clone(), denom: "uterp".to_string(), amount: fund,
-    }).await?;
-    wait_for_blocks(chain_a, 3).await?;
-    wait_for_blocks(chain_b, 3).await?;
-
-    // 2. Copy ALL 4 wasm files into BOTH chain containers (mirrors Go SetupChain on both)
-    println!("\n--- Copying wasm files into containers ---");
-    let note_path_a = copy_wasm_to_chain(chain_a, &note_host, "polytone_note.wasm").await?;
-    let voice_path_a = copy_wasm_to_chain(chain_a, &voice_host, "polytone_voice.wasm").await?;
-    let proxy_path_a = copy_wasm_to_chain(chain_a, &proxy_host, "polytone_proxy.wasm").await?;
-    let tester_path_a = copy_wasm_to_chain(chain_a, &tester_host, "polytone_tester.wasm").await?;
-
-    let note_path_b = copy_wasm_to_chain(chain_b, &note_host, "polytone_note.wasm").await?;
-    let voice_path_b = copy_wasm_to_chain(chain_b, &voice_host, "polytone_voice.wasm").await?;
-    let proxy_path_b = copy_wasm_to_chain(chain_b, &proxy_host, "polytone_proxy.wasm").await?;
-    let tester_path_b = copy_wasm_to_chain(chain_b, &tester_host, "polytone_tester.wasm").await?;
-    println!("  Files copied to both containers.");
-
-    // 3. Store all 4 contracts on chain A
-    println!("\n--- Deploying contracts on chain A ---");
-    let note_code_a = store_contract(chain_a, "user-a", &note_path_a).await?;
-    println!("  Note code_id: {}", note_code_a);
-    let voice_code_a = store_contract(chain_a, "user-a", &voice_path_a).await?;
-    println!("  Voice code_id: {}", voice_code_a);
-    let proxy_code_a = store_contract(chain_a, "user-a", &proxy_path_a).await?;
-    println!("  Proxy code_id: {}", proxy_code_a);
-    let tester_code_a = store_contract(chain_a, "user-a", &tester_path_a).await?;
-    println!("  Tester code_id: {}", tester_code_a);
-
-    // Instantiate on chain A: note, voice (with proxy_code_id), tester
-    let note_init_a = r#"{"block_max_gas":"100000000"}"#;
-    let note_addr_a = instantiate_contract(chain_a, "user-a", &note_code_a, note_init_a, "polytone-note").await?;
-    println!("  Note contract: {}", note_addr_a);
-
-    let voice_init_a = format!(
-        r#"{{"proxy_code_id":"{proxy_code_a}","block_max_gas":"100000000","contract_addr_len":32}}"#
-    );
-    let voice_addr_a = instantiate_contract(chain_a, "user-a", &voice_code_a, &voice_init_a, "polytone-voice").await?;
-    println!("  Voice contract: {}", voice_addr_a);
-
-    let tester_addr_a = instantiate_contract(chain_a, "user-a", &tester_code_a, "{}", "polytone-tester").await?;
-    println!("  Tester contract: {}", tester_addr_a);
-
-    // 4. Store all 4 contracts on chain B
-    println!("\n--- Deploying contracts on chain B ---");
-    let note_code_b = store_contract(chain_b, "user-b", &note_path_b).await?;
-    println!("  Note code_id: {}", note_code_b);
-    let voice_code_b = store_contract(chain_b, "user-b", &voice_path_b).await?;
-    println!("  Voice code_id: {}", voice_code_b);
-    let proxy_code_b = store_contract(chain_b, "user-b", &proxy_path_b).await?;
-    println!("  Proxy code_id: {}", proxy_code_b);
-    let tester_code_b = store_contract(chain_b, "user-b", &tester_path_b).await?;
-    println!("  Tester code_id: {}", tester_code_b);
-
-    // Instantiate on chain B: note, voice (with proxy_code_id), tester
-    let note_init_b = r#"{"block_max_gas":"100000000"}"#;
-    let note_addr_b = instantiate_contract(chain_b, "user-b", &note_code_b, note_init_b, "polytone-note").await?;
-    println!("  Note contract: {}", note_addr_b);
-
-    let voice_init_b = format!(
-        r#"{{"proxy_code_id":"{proxy_code_b}","block_max_gas":"100000000","contract_addr_len":32}}"#
-    );
-    let voice_addr_b = instantiate_contract(chain_b, "user-b", &voice_code_b, &voice_init_b, "polytone-voice").await?;
-    println!("  Voice contract: {}", voice_addr_b);
-
-    let tester_addr_b = instantiate_contract(chain_b, "user-b", &tester_code_b, "{}", "polytone-tester").await?;
-    println!("  Tester contract: {}", tester_addr_b);
+    // Contracts were deployed in parallel with relayer setup (see main).
+    let (dep_a, dep_b) = match deployed {
+        Some(d) => d,
+        None => deploy_polytone_contracts(ic, &note_host, &voice_host, &proxy_host, &tester_host).await?,
+    };
+    let note_addr_a = dep_a.note_addr;
+    let tester_addr_a = dep_a.tester_addr;
+    let voice_addr_b = dep_b.voice_addr;
+    let tester_addr_b = dep_b.tester_addr;
 
     // 5. Create custom IBC channel: chain A note <-> chain B voice
     println!("\n--- Creating polytone IBC channel ---");
@@ -441,8 +607,18 @@ async fn run_test(ic: &mut Interchain) -> Result<(), Box<dyn std::error::Error>>
         version: "polytone-1".to_string(),
     };
     relayer.create_channel("polytone-path", &channel_opts).await?;
-    println!("  Polytone channel created!");
-    wait_for_blocks(chain_a, 5).await?;
+    // Hermes query-channels JSON does not deserialize wasm ports reliably.
+    let poly_channel_id = find_ibc_channel(chain_a, &src_port).await?;
+    // Start Hermes only after the wasm channel exists so packet workers
+    // attach to wasm.<note> / wasm.<voice>, not just transfer.
+    println!("  Starting Hermes against transfer + polytone channels...");
+    ic.start_relayers().await?;
+    wait_for_blocks(chain_a, 1).await?;
+    println!(
+        "  Polytone channel created: {} ({}) <-> {}",
+        poly_channel_id, src_port, dst_port
+    );
+    wait_for_blocks(chain_a, 1).await?;
 
     // 6. Execute cross-chain message via note on chain A
     //    Targets chain B's tester for the wasm execute, chain B's voice for distribution msg.
@@ -473,7 +649,7 @@ async fn run_test(ic: &mut Interchain) -> Result<(), Box<dyn std::error::Error>>
                     }
                 }
             ],
-            "timeout_seconds": "100",
+            "timeout_seconds": "600",
             "callback": {
                 "receiver": tester_addr_a,
                 "msg": callback_msg
@@ -497,31 +673,126 @@ async fn run_test(ic: &mut Interchain) -> Result<(), Box<dyn std::error::Error>>
     if !exec_output.stderr.is_empty() {
         println!("  Execute stderr: {}", exec_output.stderr_str().trim());
     }
-
-    // 7. Wait for IBC relay
-    println!("\n--- Waiting for IBC relay ---");
-    wait_for_blocks(chain_a, 10).await?;
-    wait_for_blocks(chain_b, 5).await?;
-
-    // 8. Query tester on chain A for callback history
-    println!("\n--- Query Callback History ---");
-    let query_msg = r#"{"history":{}}"#;
-    let query_output = chain_a.chain_exec(&[
-        "query", "wasm", "contract-state", "smart", &tester_addr_a, query_msg,
-        "--output", "json",
-    ]).await?;
-    let result = query_output.stdout_str();
-    println!("  Callback result: {}", result.trim());
-
-    let result_json: serde_json::Value = serde_json::from_str(result.trim())
+    let exec_json: serde_json::Value = serde_json::from_str(exec_output.stdout_str().trim())
         .unwrap_or(serde_json::Value::Null);
-    let data = &result_json["data"];
-
-    if !data.is_null() {
-        println!("  Callback data present — polytone roundtrip succeeded!");
-    } else {
-        println!("  No callback data yet (may need more time for relay)");
+    let txhash = exec_json["txhash"].as_str().unwrap_or("").to_string();
+    if txhash.is_empty() {
+        return Err("note execute produced no txhash".into());
     }
+    let mut tx_code: Option<u64> = exec_json["code"].as_u64();
+    for _ in 0..20 {
+        wait_for_blocks(chain_a, 1).await?;
+        let q = chain_a
+            .chain_exec(&["query", "tx", &txhash, "--output", "json"])
+            .await;
+        if let Ok(out) = q {
+            if let Ok(j) = serde_json::from_str::<serde_json::Value>(out.stdout_str().trim()) {
+                tx_code = j["code"].as_u64();
+                break;
+            }
+        }
+    }
+    if tx_code != Some(0) {
+        return Err(format!("note execute tx {txhash} code={tx_code:?}").into());
+    }
+    println!("  Execute included: {txhash}");
+    relayer.flush("polytone-path", &poly_channel_id).await?;
+
+    // Relay both legs (A->B execute, B->A callback). Event-only Hermes
+    // (clear_interval used to be 0) will miss send_packet if the websocket
+    // drops it; flush the wasm channel after each wait.
+    println!("\n--- Waiting for IBC relay ---");
+    const WANT_INITIATOR_MSG: &str = "aGVsbG8K"; // base64("hello\n")
+
+    let mut callback_hist = serde_json::Value::Null;
+    let mut hello_hist = serde_json::Value::Null;
+    let mut got_callback = false;
+    let mut got_hello = false;
+    for attempt in 1..=15 {
+        relayer.flush("polytone-path", &poly_channel_id).await?;
+        wait_for_blocks(chain_a, 2).await?;
+        wait_for_blocks(chain_b, 2).await?;
+
+        let cb_out = chain_a
+            .chain_exec(&[
+                "query",
+                "wasm",
+                "contract-state",
+                "smart",
+                &tester_addr_a,
+                r#"{"history":{}}"#,
+                "--output",
+                "json",
+            ])
+            .await?;
+        callback_hist = serde_json::from_str(cb_out.stdout_str().trim())?;
+        let hello_out = chain_b
+            .chain_exec(&[
+                "query",
+                "wasm",
+                "contract-state",
+                "smart",
+                &tester_addr_b,
+                r#"{"hello_history":{}}"#,
+                "--output",
+                "json",
+            ])
+            .await?;
+        hello_hist = serde_json::from_str(hello_out.stdout_str().trim())?;
+        println!("  attempt {attempt} callback={}", callback_hist);
+        println!("  attempt {attempt} hello_history={}", hello_hist);
+
+        let hist = callback_hist
+            .pointer("/data/history")
+            .and_then(|v| v.as_array());
+        got_callback = hist.map(|h| !h.is_empty()).unwrap_or(false);
+        let hello = hello_hist
+            .pointer("/data/history")
+            .and_then(|v| v.as_array());
+        got_hello = hello.map(|h| !h.is_empty()).unwrap_or(false);
+        if got_callback && got_hello {
+            break;
+        }
+    }
+
+    if !got_hello {
+        return Err(format!(
+            "forward packet never executed on chain-b tester (hello_history empty): {hello_hist}"
+        )
+        .into());
+    }
+    if !got_callback {
+        return Err(format!(
+            "callback packet never returned to chain-a tester (history empty): {callback_hist}"
+        )
+        .into());
+    }
+    let last = callback_hist
+        .pointer("/data/history")
+        .and_then(|v| v.as_array())
+        .and_then(|h| h.last())
+        .cloned()
+        .unwrap();
+    let initiator_msg = last
+        .get("initiator_msg")
+        .and_then(|v| v.as_str())
+        .unwrap_or("");
+    if initiator_msg != WANT_INITIATOR_MSG {
+        return Err(format!(
+            "callback initiator_msg={initiator_msg:?} want {WANT_INITIATOR_MSG:?} last={last}"
+        )
+        .into());
+    }
+    if last
+        .pointer("/result/error")
+        .and_then(|v| v.as_str())
+        .map(|s| !s.is_empty())
+        .unwrap_or(false)
+    {
+        return Err(format!("callback result.error set: {last}").into());
+    }
+    println!("  Forward hello_history and callback history both non-empty");
+    println!("  Callback initiator_msg={initiator_msg} — polytone roundtrip succeeded");
 
     println!("\nPolytone cross-chain execution test PASSED!");
     Ok(())
@@ -572,15 +843,39 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
             path: "polytone-path".to_string(),
         });
 
-    println!("\nBuilding interchain environment...");
-    ic.build(InterchainBuildOptions {
+    let opts = InterchainBuildOptions {
         test_name: test_name.to_string(),
         ..Default::default()
-    }).await?;
-    println!("Interchain environment ready!");
+    };
+    println!("\nStarting chains...");
+    ic.start_chains(&opts).await?;
+    println!("Chains producing blocks. Deploying contracts || funding Hermes...");
 
-    // 6. Run test, then ALWAYS clean up
-    let result = run_test(&mut ic).await;
+    let zk_root = resolve_terp_core()?;
+    let note_host = zk_root.join(NOTE_WASM);
+    let voice_host = zk_root.join(VOICE_WASM);
+    let proxy_host = zk_root.join(PROXY_WASM);
+    let tester_host = zk_root.join(TESTER_WASM);
+    for (name, path) in [
+        ("note", &note_host),
+        ("voice", &voice_host),
+        ("proxy", &proxy_host),
+        ("tester", &tester_host),
+    ] {
+        if !path.exists() {
+            return Err(format!("Missing {name} wasm: {}", path.display()).into());
+        }
+    }
+
+    let deploy_f = deploy_polytone_contracts(&ic, &note_host, &voice_host, &proxy_host, &tester_host);
+    let relay_f = ic.configure_relayers_and_paths_without_start();
+    let (deployed, relay_res) = tokio::join!(deploy_f, relay_f);
+    relay_res?;
+    let deployed = deployed?;
+    ic.mark_built();
+    println!("Interchain environment ready + contracts deployed.");
+
+    let result = run_test(&mut ic, Some(deployed)).await;
 
     println!("\n--- Shutdown ---");
     if let Err(e) = ic.close().await {

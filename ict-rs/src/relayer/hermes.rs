@@ -38,6 +38,7 @@ struct PathChainConfig {
     client_id: String,
     connection_id: String,
     port_id: String,
+    channel_id: String,
 }
 
 /// A Hermes chain config that will be serialized into the TOML config file.
@@ -124,7 +125,7 @@ impl HermesRelayer {
         toml.push_str("[mode.connections]\nenabled = true\n\n");
         toml.push_str("[mode.channels]\nenabled = true\n\n");
         // Go: ClearInterval=0, ClearOnStart=true, TxConfirmation=false
-        toml.push_str("[mode.packets]\nenabled = true\nclear_interval = 0\nclear_on_start = true\ntx_confirmation = false\n\n");
+        toml.push_str("[mode.packets]\nenabled = true\nclear_interval = 10\nclear_on_start = true\ntx_confirmation = false\n\n");
 
         // Rest, Telemetry, TracingServer — include host/port fields even when
         // disabled; Hermes 1.8.2+ requires them.
@@ -157,7 +158,8 @@ impl HermesRelayer {
                  memo_prefix = '{memo_prefix}'\n\
                  \n\
                  [chains.event_source]\n\
-                 mode = 'push'\n\
+                 mode = 'pull'\n\
+                 interval = '500ms'\n\
                  url = '{event_source_url}'\n\
                  batch_delay = '200ms'\n\
                  \n\
@@ -382,7 +384,7 @@ impl Relayer for HermesRelayer {
             address_type_derivation: "cosmos".to_string(),
             store_prefix: "ibc".to_string(),
             default_gas: 100000,
-            max_gas: 400000,
+            max_gas: 15_000_000,
             gas_price_denom: gas_denom,
             gas_price_amount: gas_amount,
             gas_multiplier: config.gas_adjustment,
@@ -674,11 +676,12 @@ impl Relayer for HermesRelayer {
         })?;
         info!(relayer = "hermes", channel_a = %ch_a, channel_b = %ch_b, "Channel created");
 
-        // Store port IDs
         let mut paths = self.paths.lock().unwrap();
         if let Some(path) = paths.get_mut(path_name) {
             path.chain_a.port_id = src_port.to_string();
             path.chain_b.port_id = dst_port.to_string();
+            path.chain_a.channel_id = ch_a;
+            path.chain_b.channel_id = ch_b;
         }
 
         Ok(())
@@ -741,7 +744,9 @@ impl Relayer for HermesRelayer {
     }
 
     async fn flush(&self, path_name: &str, channel_id: &str) -> Result<()> {
-        let (chain_a, port_a) = {
+        let home = self.docker_relayer.commander().home_dir();
+        let cfg = format!("{home}/.hermes/config.toml");
+        let (chain_a, port_a, chain_b, port_b, ch_b) = {
             let paths = self.paths.lock().unwrap();
             let path = paths.get(path_name).ok_or_else(|| {
                 IctError::Relayer {
@@ -752,22 +757,42 @@ impl Relayer for HermesRelayer {
             (
                 path.chain_a.chain_id.clone(),
                 path.chain_a.port_id.clone(),
+                path.chain_b.chain_id.clone(),
+                path.chain_b.port_id.clone(),
+                path.chain_b.channel_id.clone(),
             )
         };
 
-        let cmd = vec![
-            "hermes".to_string(),
-            "clear".to_string(),
-            "packets".to_string(),
-            "--chain".to_string(),
-            chain_a,
-            "--port".to_string(),
-            port_a,
-            "--channel".to_string(),
-            channel_id.to_string(),
-        ];
-
-        self.docker_relayer.exec_oneoff(&cmd, &[]).await?;
+        for (chain, port, ch) in [
+            (chain_a, port_a, channel_id.to_string()),
+            (chain_b, port_b, if ch_b.is_empty() { channel_id.to_string() } else { ch_b }),
+        ] {
+            if chain.is_empty() || port.is_empty() || ch.is_empty() {
+                continue;
+            }
+            info!(relayer = "hermes", %chain, %port, channel = %ch, "clear packets");
+            let cmd = vec![
+                "hermes".to_string(),
+                "--config".to_string(),
+                cfg.clone(),
+                "clear".to_string(),
+                "packets".to_string(),
+                "--chain".to_string(),
+                chain,
+                "--port".to_string(),
+                port,
+                "--channel".to_string(),
+                ch,
+            ];
+            let out = self.docker_relayer.exec_oneoff(&cmd, &[]).await?;
+            debug!(
+                relayer = "hermes",
+                stdout = %out.stdout_str(),
+                stderr = %out.stderr_str(),
+                exit = out.exit_code,
+                "clear packets output"
+            );
+        }
         Ok(())
     }
 

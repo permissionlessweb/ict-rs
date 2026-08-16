@@ -151,7 +151,19 @@ impl Interchain {
             }
         }
 
-        // Phase 1: Initialize all chains
+        self.start_chains(&opts).await?;
+        if !opts.skip_path_creation {
+            self.configure_relayers_and_paths().await?;
+        }
+        self.built = true;
+        info!(test = %opts.test_name, "Interchain environment ready");
+        Ok(())
+    }
+
+    /// Phase 1–2: initialize and start chains so they produce blocks.
+    /// Relayer funding/start is a separate call so tests can deploy contracts
+    /// in parallel with Hermes setup.
+    pub async fn start_chains(&mut self, opts: &InterchainBuildOptions) -> Result<()> {
         let ctx = TestContext {
             test_name: opts.test_name.clone(),
             network_id: format!("ict-{}", opts.test_name),
@@ -162,7 +174,6 @@ impl Interchain {
             chain.initialize(&ctx).await?;
         }
 
-        // Phase 2: Start all chains with genesis wallets
         for (chain_id, chain) in &mut self.chains {
             let wallets = opts
                 .genesis_wallets
@@ -172,16 +183,37 @@ impl Interchain {
             info!(chain_id = %chain_id, genesis_wallets = wallets.len(), "Starting chain");
             chain.start(wallets).await?;
         }
-
-        // Phase 3: Configure relayers
-        if !opts.skip_path_creation {
-            self.configure_relayers().await?;
-            self.create_ibc_paths().await?;
-        }
-
-        self.built = true;
-        info!(test = %opts.test_name, "Interchain environment ready");
         Ok(())
+    }
+
+    /// Phase 3: fund relayer keys, open the transfer path, start Hermes.
+    /// `&self` so it can run concurrently with contract stores on the same chains.
+    pub async fn configure_relayers_and_paths(&self) -> Result<()> {
+        self.configure_relayers().await?;
+        self.create_ibc_paths().await?;
+        self.start_relayers().await?;
+        Ok(())
+    }
+
+    /// Fund Hermes and open the transfer path, but do not `hermes start` yet.
+    /// Start after extra wasm channels exist so workers attach to those ports.
+    pub async fn configure_relayers_and_paths_without_start(&self) -> Result<()> {
+        self.configure_relayers().await?;
+        self.create_ibc_paths().await?;
+        Ok(())
+    }
+
+    pub async fn start_relayers(&self) -> Result<()> {
+        let path_names: Vec<&str> = self.links.iter().map(|l| l.path.as_str()).collect();
+        for (name, relayer) in &self.relayers {
+            info!(relayer = %name, "Starting relayer");
+            relayer.start(&path_names).await?;
+        }
+        Ok(())
+    }
+
+    pub fn mark_built(&mut self) {
+        self.built = true;
     }
 
     /// Configure all relayers with chain connection information.
@@ -301,13 +333,6 @@ impl Interchain {
             };
             relayer.link_path(&link.path, &channel_opts).await?;
             info!(path = %link.path, "IBC path created");
-        }
-
-        // Start all relayers
-        let path_names: Vec<&str> = self.links.iter().map(|l| l.path.as_str()).collect();
-        for (name, relayer) in &self.relayers {
-            info!(relayer = %name, "Starting relayer");
-            relayer.start(&path_names).await?;
         }
 
         Ok(())
