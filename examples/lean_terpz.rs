@@ -187,6 +187,27 @@ fn collect_genesis_subjects(genesis: &serde_json::Value) -> Vec<serde_json::Valu
         }
     }
 
+    for path in ["/validators", "/consensus/validators"] {
+        if let Some(vals) = genesis.pointer(path).and_then(|v| v.as_array()) {
+            for v in vals {
+                let pk = v
+                    .get("pub_key")
+                    .or_else(|| v.get("pubkey"))
+                    .or_else(|| v.get("consensus_pubkey"))
+                    .and_then(pubkey_b64_from_obj);
+                if let Some(pubkey) = pk {
+                    let w = v
+                        .get("power")
+                        .or_else(|| v.get("voting_power"))
+                        .and_then(|x| x.as_i64().or_else(|| x.as_str().and_then(|s| s.parse().ok())))
+                        .filter(|&n| n > 0)
+                        .unwrap_or(10);
+                    subjects.push(serde_json::json!({"pubkey": pubkey, "weight": w}));
+                }
+            }
+        }
+    }
+
     let mut seen = std::collections::BTreeSet::new();
     subjects.retain(|s| {
         s.get("pubkey")
@@ -222,8 +243,10 @@ fn modify_genesis(_cfg: &ChainConfig, raw: Vec<u8>) -> IctResult<Vec<u8>> {
             ));
         }
         eprintln!(
-            "lean_terpz modify_genesis: owns=true genesis_subjects={}",
-            subjects.len()
+            "lean_terpz modify_genesis: owns=true genesis_subjects={} app_state_keys={:?} validators_top={}",
+            subjects.len(),
+            genesis.get("app_state").and_then(|a| a.as_object()).map(|o| o.keys().cloned().collect::<Vec<_>>()),
+            genesis.get("validators").and_then(|v| v.as_array()).map(|a| a.len()).unwrap_or(0)
         );
         genesis["app_state"]["leanval"] = serde_json::json!({
             "leanval_owns_valset": true,
@@ -342,7 +365,7 @@ async fn workflow_staking(chain: &CosmosChain, nvals: usize) -> Result<(), Box<d
 }
 
 fn bonded_set_row_count(v: &serde_json::Value) -> usize {
-    for key in ["subjects", "bonded_set", "genesis_subjects", "set", "validators"] {
+    for key in ["rows", "subjects", "bonded_set", "genesis_subjects", "set", "validators"] {
         if let Some(arr) = v.get(key).and_then(|x| x.as_array()) {
             return arr.len();
         }
