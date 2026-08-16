@@ -626,6 +626,23 @@ async fn workflow_membership(
     let r0 = broadcast_raw(chain, &encode_join(period, &subj0, 10)).await?;
     let r1 = broadcast_raw(chain, &encode_join(period, &subj1, 10)).await?;
     println!("  [join] tx0={} tx1={}", r0.chars().take(160).collect::<String>(), r1.chars().take(160).collect::<String>());
+    let unc = chain.validators()[0]
+        .exec_raw(
+            &[
+                "sh",
+                "-c",
+                "wget -qO- http://127.0.0.1:26657/num_unconfirmed_txs || true",
+            ],
+            &[],
+        )
+        .await;
+    if let Ok(u) = unc {
+        println!(
+            "  [join] unconfirmed {}",
+            u.stdout_str().chars().take(200).collect::<String>()
+        );
+    }
+
 
     if !tx_ok(&r0) || !tx_ok(&r1) {
         caps.rec(
@@ -640,7 +657,7 @@ async fn workflow_membership(
         return Ok(());
     }
 
-    wait_for_blocks(chain, 3).await?;
+    wait_for_blocks(chain, 8).await?;
     let after_join = bonded_rows(&query_json(chain, &["leanval", "bonded-set", "0"]).await?);
     println!("  [churn] BondedSet after JOIN rows={after_join} (before={bs_before})");
     if after_join < bs_before + 2 {
