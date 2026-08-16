@@ -273,11 +273,15 @@ async fn broadcast_raw(
     let out = chain.validators()[0]
         .exec_raw(&["sh", "-c", &cmd], &[])
         .await?;
-    Ok(out.stdout_str().to_string() + out.stderr_str())
+    Ok(out.stdout_str().to_string() + &out.stderr_str())
 }
 
 fn tx_ok(resp: &str) -> bool {
-    let v: serde_json::Value = serde_json::from_str(resp.trim()).unwrap_or(serde_json::Value::Null);
+    let json_part = match (resp.find('{'), resp.rfind('}')) {
+        (Some(i), Some(j)) if j > i => &resp[i..=j],
+        _ => resp.trim(),
+    };
+    let v: serde_json::Value = serde_json::from_str(json_part).unwrap_or(serde_json::Value::Null);
     let code = v
         .pointer("/result/code")
         .or_else(|| v.get("code"))
