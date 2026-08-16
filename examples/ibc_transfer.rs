@@ -9,7 +9,7 @@
 //! Build the Terp chain Docker image locally:
 //! ```sh
 //! cd terp-core && make build-docker-local
-//! # → terpnetwork/terp-core:local-zk
+//! # → terpnetwork/terp-core:local
 //! ```
 //!
 //! ```sh
@@ -25,7 +25,7 @@ fn terp_image() -> DockerImage {
     let repo = std::env::var("TERP_IMAGE_REPO")
         .unwrap_or_else(|_| "terpnetwork/terp-core".to_string());
     let version = std::env::var("TERP_IMAGE_VERSION")
-        .unwrap_or_else(|_| "local-zk".to_string());
+        .unwrap_or_else(|_| "local".to_string());
     DockerImage {
         repository: repo,
         version,
