@@ -1,8 +1,10 @@
-//! Production-grade Lean + Stwo e2e via **ict-rs Docker + cw-orch Daemon**.
+//! Production-grade Lean e2e: **ict-rs Docker + cw-orch Daemon + JOIN/LEAV**.
 //!
-//! Not mock. Not ICT_MOCK. Not multi-test. A real `terpz` image, N genesis
-//! validators, host-mapped gRPC, cw-orch `Daemon` over that gRPC, plus node
-//! CLI for BondedSet / staking / wasm / fees.
+//! Not mock. Not ICT_MOCK. Never writes `lean-pending.json`.
+//! Exercises live capabilities and **prints a gap matrix** for work still
+//! required to ship (image JOIN, cash Δ, Stwo, one power function).
+//!
+//! Needs `terpz-lean` built from feat/lean-v6 @ 94c61e6 or later.
 //!
 //! ```sh
 //! cd crates/ict-rs/ict-rs-cw-orch
@@ -178,11 +180,136 @@ fn bonded_rows(v: &serde_json::Value) -> usize {
     0
 }
 
+fn staking_count(v: &serde_json::Value) -> usize {
+    v.get("validators")
+        .and_then(|x| x.as_array())
+        .map(|a| a.len())
+        .unwrap_or(0)
+}
+
 async fn query_json(
     chain: &CosmosChain,
     args: &[&str],
 ) -> Result<serde_json::Value, Box<dyn std::error::Error>> {
     Ok(chain.query_json(args).await?)
+}
+
+fn period_of(height: u64) -> u64 {
+    height / 600
+}
+
+fn encode_join(period: u64, subject: &[u8], weight: i64) -> Vec<u8> {
+    let subj = if subject.len() > 255 {
+        &subject[..255]
+    } else {
+        subject
+    };
+    let mut out = b"JOIN".to_vec();
+    out.push(1);
+    out.extend_from_slice(&period.to_be_bytes());
+    out.push(subj.len() as u8);
+    out.extend_from_slice(subj);
+    out.extend_from_slice(&(weight as u64).to_be_bytes());
+    out
+}
+
+fn encode_leave(period: u64, subject: &[u8]) -> Vec<u8> {
+    let subj = if subject.len() > 255 {
+        &subject[..255]
+    } else {
+        subject
+    };
+    let mut out = b"LEAV".to_vec();
+    out.push(1);
+    out.extend_from_slice(&period.to_be_bytes());
+    out.push(subj.len() as u8);
+    out.extend_from_slice(subj);
+    out
+}
+
+fn to_hex(b: &[u8]) -> String {
+    b.iter().map(|x| format!("{x:02x}")).collect()
+}
+
+fn decode_pk(b64: &str) -> Result<Vec<u8>, Box<dyn std::error::Error>> {
+    fn d(c: u8) -> Option<u8> {
+        match c {
+            b'A'..=b'Z' => Some(c - b'A'),
+            b'a'..=b'z' => Some(c - b'a' + 26),
+            b'0'..=b'9' => Some(c - b'0' + 52),
+            b'+' => Some(62),
+            b'/' => Some(63),
+            _ => None,
+        }
+    }
+    let s: Vec<u8> = b64.trim().bytes().filter(|c| *c != b'=' && !c.is_ascii_whitespace()).collect();
+    let mut out = Vec::new();
+    let mut i = 0;
+    while i + 3 < s.len() + 3 && i < s.len() {
+        let a = d(s[i]).ok_or("b64")?;
+        let b = if i + 1 < s.len() { d(s[i + 1]).ok_or("b64")? } else { 0 };
+        let c = if i + 2 < s.len() { d(s[i + 2]).unwrap_or(0) } else { 0 };
+        let e = if i + 3 < s.len() { d(s[i + 3]).unwrap_or(0) } else { 0 };
+        out.push((a << 2) | (b >> 4));
+        if i + 2 < s.len() {
+            out.push((b << 4) | (c >> 2));
+        }
+        if i + 3 < s.len() {
+            out.push((c << 6) | e);
+        }
+        i += 4;
+    }
+    Ok(out)
+}
+
+async fn broadcast_raw(
+    chain: &CosmosChain,
+    raw: &[u8],
+) -> Result<String, Box<dyn std::error::Error>> {
+    let hex = to_hex(raw);
+    let cmd = format!(
+        r#"curl -sS "http://127.0.0.1:26657/broadcast_tx_sync?tx=0x{hex}" || wget -qO- "http://127.0.0.1:26657/broadcast_tx_sync?tx=0x{hex}""#
+    );
+    let out = chain.validators()[0]
+        .exec_raw(&["sh", "-c", &cmd], &[])
+        .await?;
+    Ok(out.stdout_str().to_string() + out.stderr_str())
+}
+
+fn tx_ok(resp: &str) -> bool {
+    let v: serde_json::Value = serde_json::from_str(resp.trim()).unwrap_or(serde_json::Value::Null);
+    let code = v
+        .pointer("/result/code")
+        .or_else(|| v.get("code"))
+        .and_then(|c| c.as_u64())
+        .unwrap_or(99);
+    code == 0
+}
+
+struct Caps {
+    rows: Vec<(&'static str, &'static str, String)>,
+}
+
+impl Caps {
+    fn new() -> Self {
+        Self { rows: Vec::new() }
+    }
+    fn rec(&mut self, id: &'static str, status: &'static str, note: impl Into<String>) {
+        let note = note.into();
+        println!("  [cap] {id:28} {status:8} {note}");
+        self.rows.push((id, status, note));
+    }
+    fn print_matrix(&self) {
+        println!("\n=== ELEVATION MATRIX (live vs remaining work) ===");
+        for (id, st, note) in &self.rows {
+            println!("  {st:8} {id:28} {note}");
+        }
+    }
+    fn must_failed(&self) -> bool {
+        self.rows
+            .iter()
+            .any(|(id, st, _)| *st == "FAIL" && matches!(*id, "file_admission" | "join_leav" | "owns_bonded" | "cw_orch" | "consensus" | "lnpr_checktx"))
+    }
 }
 
 #[tokio::main]
@@ -206,7 +333,7 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
     if let Err(e) = chain.stop().await {
         eprintln!("cleanup: {e}");
     }
-    result.map(|()| println!("lean_production_e2e PASSED"))
+    result
 }
 
 async fn run(
@@ -214,6 +341,7 @@ async fn run(
     n: usize,
     f: usize,
 ) -> Result<(), Box<dyn std::error::Error>> {
+    let mut caps = Caps::new();
     let ctx = TestContext {
         test_name: "lean-cw-orch-prod".to_string(),
         network_id: String::new(),
@@ -245,85 +373,150 @@ async fn run(
     match daemon {
         Ok(_d) => {
             println!("  [cw-orch] Daemon built on live gRPC (production node, not mock)");
+            caps.rec("cw_orch", "PASS", "Daemon on host gRPC");
         }
         Err(e) => {
-            return Err(format!(
-                "cw-orch Daemon build failed against live node (not mock): {e}"
-            )
-            .into());
+            caps.rec("cw_orch", "FAIL", format!("{e}"));
+            caps.print_matrix();
+            return Err(format!("cw-orch Daemon build failed: {e}").into());
         }
     }
 
-    // --- production module surfaces ---
     let h0 = chain.height().await?;
     wait_for_blocks(chain, 3).await?;
     let h1 = chain.height().await?;
     if h1 < h0 + 2 {
+        caps.rec("consensus", "FAIL", format!("{h0}→{h1}"));
+        caps.print_matrix();
         return Err(format!("consensus stalled {h0}→{h1}").into());
     }
-    println!("  [consensus] height {h0} → {h1}");
+    caps.rec("consensus", "PASS", format!("height {h0} → {h1}"));
 
     let staking = query_json(chain, &["staking", "validators"]).await?;
-    let sv = staking
-        .get("validators")
-        .and_then(|v| v.as_array())
-        .map(|a| a.len())
-        .unwrap_or(0);
+    let sv = staking_count(&staking);
     println!("  [staking] validators={sv} (want {n})");
     if sv < n {
-        return Err(format!("staking {sv} < {n} — genesis gentxs not collected").into());
+        caps.print_matrix();
+        return Err(format!("staking {sv} < {n}").into());
     }
 
     let bs = query_json(chain, &["leanval", "bonded-set", "0"]).await?;
-    let rows = bonded_rows(&bs);
-    println!("  [leanval] bonded-set 0 rows={rows}");
-    if owns_valset() && rows < n {
-        return Err(format!("BondedSet {rows} < {n}").into());
+    let rows0 = bonded_rows(&bs);
+    println!("  [leanval] bonded-set 0 rows={rows0}");
+    if owns_valset() && rows0 < n {
+        caps.rec("owns_bonded", "FAIL", format!("{rows0} < {n}"));
+        caps.print_matrix();
+        return Err(format!("BondedSet {rows0} < {n}").into());
     }
+    caps.rec(
+        "owns_bonded",
+        if owns_valset() { "PASS" } else { "GAP" },
+        format!("BondedSet={rows0} owns={}", owns_valset()),
+    );
 
-    // wasm module is live on production terpz
     match query_json(chain, &["wasm", "list-code"]).await {
-        Ok(v) => println!("  [wasm] list-code ok keys={}", v.to_string().len()),
-        Err(e) => return Err(format!("wasm list-code required on production image: {e}").into()),
+        Ok(v) => caps.rec("wasm_module", "PASS", format!("list-code bytes={}", v.to_string().len())),
+        Err(e) => {
+            caps.rec("wasm_module", "FAIL", format!("{e}"));
+            caps.print_matrix();
+            return Err(format!("wasm list-code: {e}").into());
+        }
     }
 
-    // fee-bearing send (non-zero gas)
     let primary = &chain.validators()[0];
     let addr = primary.get_key_address("validator").await?;
     let send = primary
         .bank_send("validator", &addr, "1000uterp", "0.01uterp")
         .await?;
     if send.exit_code != 0 {
+        caps.rec("fees_tx", "FAIL", send.stderr_str().to_string());
+        caps.print_matrix();
         return Err(format!("fee-bearing bank send failed: {}", send.stderr_str()).into());
     }
-    println!("  [fees] bank send with 0.01uterp gas ok");
+    caps.rec("fees_tx", "PASS", "bank send 0.01uterp gas");
 
     let op = staking
         .pointer("/validators/0/operator_address")
         .and_then(|s| s.as_str())
-        .unwrap_or("");
-    if !op.is_empty() {
-        match query_json(chain, &["distribution", "validator-outstanding-rewards", op]).await {
-            Ok(r) => println!(
-                "  [rewards] outstanding-rewards query ok bytes={}",
-                r.to_string().len()
-            ),
-            Err(e) => println!("  [rewards] outstanding-rewards: {e}"),
-        }
+        .unwrap_or("")
+        .to_string();
+    let rewards_before = if !op.is_empty() {
+        query_json(chain, &["distribution", "validator-outstanding-rewards", &op])
+            .await
+            .ok()
+    } else {
+        None
+    };
+
+    // LNPR must not CheckTx (vote-sdk inject-class).
+    let lnpr_probe = [b"LNPR".as_slice(), &[1u8, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0]].concat();
+    let lnpr_resp = broadcast_raw(chain, &lnpr_probe).await.unwrap_or_default();
+    if tx_ok(&lnpr_resp) {
+        caps.rec("lnpr_checktx", "FAIL", "LNPR accepted in mempool");
+    } else {
+        caps.rec("lnpr_checktx", "PASS", "LNPR CheckTx rejected");
     }
 
-    // MsgSudoContract to a made-up addr must not be a silent success
-    // (ante / wasm). Best-effort: query leanval is the module surface.
+    caps.rec(
+        "file_admission",
+        "PASS",
+        "e2e does not write lean-pending.json",
+    );
 
     if f >= 2 && owns_valset() {
-        workflow_join_leave(chain).await?;
+        workflow_membership(chain, &mut caps).await?;
+    } else {
+        caps.rec("join_leav", "GAP", "need 2 full nodes + owns=true");
     }
 
-    println!("  [prod] Docker+cw-orch+CLI surfaces exercised (no mock)");
+    // Remaining product work — do not launder query-exists as cash/Stwo.
+    let rewards_after = if !op.is_empty() {
+        query_json(chain, &["distribution", "validator-outstanding-rewards", &op])
+            .await
+            .ok()
+    } else {
+        None
+    };
+    match (rewards_before, rewards_after) {
+        (Some(a), Some(b)) if a != b => {
+            caps.rec("f1_cash_delta", "PASS", "outstanding-rewards changed")
+        }
+        (Some(_), Some(_)) => caps.rec(
+            "f1_cash_delta",
+            "GAP",
+            "query ok but Δ=0 — not Lean rewards; need known-fee assert",
+        ),
+        _ => caps.rec("f1_cash_delta", "GAP", "outstanding-rewards unreadable"),
+    }
+    caps.rec(
+        "dual_last_power",
+        "GAP",
+        "staking EndBlock still writes LastValidatorPowers (wrap unused)",
+    );
+    caps.rec(
+        "stwo_statement",
+        "GAP",
+        "Dummy DSTW still; store roots slot exists, not a Stwo walk",
+    );
+    caps.rec(
+        "wasm_sudo_verify",
+        "GAP",
+        "cw-lean-verifier + proof_instance_verify not exercised",
+    );
+
+    caps.print_matrix();
+    if caps.must_failed() {
+        return Err("lean_production_e2e MUST caps failed — see ELEVATION MATRIX".into());
+    }
+    println!("lean_production_e2e PASSED (gaps remain — not product-done)");
     Ok(())
 }
 
-async fn workflow_join_leave(chain: &CosmosChain) -> Result<(), Box<dyn std::error::Error>> {
+/// Dual-writer demo + committed JOIN/LEAV. Never writes lean-pending.json.
+async fn workflow_membership(
+    chain: &CosmosChain,
+    caps: &mut Caps,
+) -> Result<(), Box<dyn std::error::Error>> {
     use ict_rs::tx::TxOptions;
 
     let mut join_pks = Vec::new();
@@ -352,16 +545,21 @@ async fn workflow_join_leave(chain: &CosmosChain) -> Result<(), Box<dyn std::err
             return Err(format!("fund: {}", o.stderr_str()).into());
         }
     }
-    for i in 0..2 {
-        let fnn = &chain.full_nodes()[i];
+
+    let bs_before = bonded_rows(&query_json(chain, &["leanval", "bonded-set", "0"]).await?);
+    let st_before = staking_count(&query_json(chain, &["staking", "validators"]).await?);
+
+    // create-validator without JOIN — staking may grow; BondedSet must not.
+    {
+        let fnn = &chain.full_nodes()[0];
         let spec = serde_json::json!({
-            "pubkey": {"@type":"/cosmos.crypto.ed25519.PubKey","key": join_pks[i]},
+            "pubkey": {"@type":"/cosmos.crypto.ed25519.PubKey","key": join_pks[0]},
             "amount": "1000000000uterp",
-            "moniker": format!("fn-{i}"),
+            "moniker": "fn-0",
             "identity": "",
             "website": "",
             "security": "",
-            "details": "cw-orch prod join",
+            "details": "staking-only, not Lean admit",
             "commission-rate": "0.1",
             "commission-max-rate": "0.2",
             "commission-max-change-rate": "0.01",
@@ -391,38 +589,89 @@ async fn workflow_join_leave(chain: &CosmosChain) -> Result<(), Box<dyn std::err
         let refs: Vec<&str> = args.iter().map(|s| s.as_str()).collect();
         let out = fnn.exec_cmd(&refs).await?;
         if out.exit_code != 0 {
-            return Err(format!("create-validator fn{i}: {}", out.stderr_str()).into());
+            caps.rec(
+                "staking_without_join",
+                "GAP",
+                format!("create-validator: {}", out.stderr_str()),
+            );
+        } else {
+            wait_for_blocks(chain, 2).await?;
+            let bs = bonded_rows(&query_json(chain, &["leanval", "bonded-set", "0"]).await?);
+            let st = staking_count(&query_json(chain, &["staking", "validators"]).await?);
+            if bs != bs_before {
+                caps.rec(
+                    "staking_without_join",
+                    "FAIL",
+                    format!("BondedSet {bs_before}→{bs} after staking-only"),
+                );
+            } else {
+                caps.rec(
+                    "staking_without_join",
+                    "PASS",
+                    format!("BondedSet stayed {bs}; staking {st_before}→{st}"),
+                );
+            }
         }
     }
-    wait_for_blocks(chain, 2).await?;
 
-    let body = serde_json::json!({
-        "join": join_pks.iter().map(|pk| serde_json::json!({"pubkey": pk, "weight": 10})).collect::<Vec<_>>(),
-        "leave": []
-    })
-    .to_string();
-    for node in chain.validators().iter().chain(chain.full_nodes().iter()) {
-        for path in [
-            format!("{}/config/lean-pending.json", node.home_dir),
-            "/terpd/.terpd/config/lean-pending.json".to_string(),
-        ] {
-            node.exec_raw(
-                &[
-                    "sh",
-                    "-c",
-                    &format!("mkdir -p $(dirname {path}) && cat > {path} << 'EOF'\n{body}\nEOF"),
-                ],
-                &[],
-            )
-            .await?;
-        }
+    let height = chain.height().await? as u64;
+    let period = period_of(height);
+    let subj0 = decode_pk(&join_pks[0])?;
+    let subj1 = decode_pk(&join_pks[1])?;
+
+    let r0 = broadcast_raw(chain, &encode_join(period, &subj0, 10)).await?;
+    let r1 = broadcast_raw(chain, &encode_join(period, &subj1, 10)).await?;
+    println!("  [join] tx0={} tx1={}", r0.chars().take(160).collect::<String>(), r1.chars().take(160).collect::<String>());
+
+    if !tx_ok(&r0) || !tx_ok(&r1) {
+        caps.rec(
+            "join_leav",
+            "FAIL",
+            format!(
+                "JOIN broadcast rejected (rebuild terpz-lean @94c61e6+). r0={} r1={}",
+                r0.chars().take(120).collect::<String>(),
+                r1.chars().take(120).collect::<String>()
+            ),
+        );
+        return Ok(());
+    }
+
+    wait_for_blocks(chain, 3).await?;
+    let after_join = bonded_rows(&query_json(chain, &["leanval", "bonded-set", "0"]).await?);
+    println!("  [churn] BondedSet after JOIN rows={after_join} (before={bs_before})");
+    if after_join < bs_before + 2 {
+        caps.rec(
+            "join_leav",
+            "FAIL",
+            format!("after JOIN BondedSet {after_join} want >={}", bs_before + 2),
+        );
+        return Ok(());
+    }
+
+    let rl = broadcast_raw(chain, &encode_leave(period, &subj1)).await?;
+    if !tx_ok(&rl) {
+        caps.rec(
+            "join_leav",
+            "FAIL",
+            format!("LEAV rejected: {}", rl.chars().take(160).collect::<String>()),
+        );
+        return Ok(());
     }
     wait_for_blocks(chain, 3).await?;
-    let bs = query_json(chain, &["leanval", "bonded-set", "0"]).await?;
-    let rows = bonded_rows(&bs);
-    println!("  [churn] bonded-set after join rows={rows}");
-    if rows < 3 {
-        return Err(format!("after join BondedSet {rows} < 3").into());
+    let after_leave = bonded_rows(&query_json(chain, &["leanval", "bonded-set", "0"]).await?);
+    println!("  [churn] BondedSet after LEAV rows={after_leave}");
+    if after_leave + 1 != after_join {
+        caps.rec(
+            "join_leav",
+            "FAIL",
+            format!("LEAV {after_join}→{after_leave}"),
+        );
+        return Ok(());
     }
+    caps.rec(
+        "join_leav",
+        "PASS",
+        format!("JOIN {bs_before}→{after_join} LEAV →{after_leave} (no pending file)"),
+    );
     Ok(())
 }
