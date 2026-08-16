@@ -190,7 +190,15 @@ async fn workflow_rewards(chain: &CosmosChain) -> Result<(), Box<dyn std::error:
     if params.is_null() {
         return Err("distribution params missing — rewards module not live".into());
     }
-    // Inflation / fee pool may be zero on a fresh 2s chain; params + query path is the gate.
+    if owns_valset() || workflow_on(&enabled_workflows(), "lean-owns") {
+        println!(
+            "  [rewards] Lean flag ON: STF AllocateTokens skipped (WrapDistribution). Query != Lean EB rewards."
+        );
+    } else {
+        println!(
+            "  [rewards] stock SDK: BeginBlock still AllocateTokens (not Lean Phase 1B)."
+        );
+    }
     Ok(())
 }
 
