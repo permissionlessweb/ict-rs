@@ -22,6 +22,23 @@ jobs:
       - name: Fetch path-deps
         run: bash ict-rs/scripts/ci/fetch-path-deps.sh
 
+      - name: Slim workspace to ict-ci crates
+        working-directory: ict-rs
+        run: |
+          # ict-rs-cw-orch always resolves optional o-line-sdl path dep.
+          # Release bins only need ict-ci + two examples.
+          python3 - <<'PY'
+          from pathlib import Path
+          p = Path("Cargo.toml")
+          t = p.read_text()
+          t = t.replace(
+              ict-rs, ict-rs-codegen, ict-rs-cw-orch, ict-rs-derive,
+              ict-rs, ict-rs-derive,
+          )
+          p.write_text(t)
+          print(p.read_text()[:400])
+          PY
+
       - name: Rust toolchain
         uses: dtolnay/rust-toolchain@master
         with:
