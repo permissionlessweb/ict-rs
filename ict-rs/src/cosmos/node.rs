@@ -383,7 +383,26 @@ impl ChainNode {
         let mut full: Vec<String> = args.iter().map(|s| s.to_string()).collect();
         full.extend(flags);
         let refs: Vec<&str> = full.iter().map(|s| s.as_str()).collect();
-        self.exec_cmd(&refs).await
+        let out = self.exec_cmd(&refs).await?;
+        // Broadcast-mode sync returns at CheckTx. The next signed tx must wait
+        // for commit so the account sequence is visible on-chain.
+        if out.exit_code == 0 {
+            let _ = self.wait_for_next_block().await;
+        }
+        Ok(out)
+    }
+
+    /// Wait until height increases (or ~12s), so subsequent txs see the new sequence.
+    pub async fn wait_for_next_block(&self) -> Result<()> {
+        let start = self.query_height().await.unwrap_or(0);
+        for _ in 0..30 {
+            tokio::time::sleep(std::time::Duration::from_millis(400)).await;
+            match self.query_height().await {
+                Ok(h) if h > start => return Ok(()),
+                _ => {}
+            }
+        }
+        Ok(())
     }
 
     /// Execute a raw command (not prefixed with chain binary).
@@ -676,10 +695,13 @@ impl ChainNode {
         if let Some(m) = memo {
             opts = opts.memo(m);
         }
+        // ibc-go v11: timeout-height 0-0 + default timestamp uses channel v2.
+        // Hermes opened a v1 transfer channel; force v1 with a height timeout.
         self.exec_tx_with(
             &[
                 "tx", "ibc-transfer", "transfer", "transfer",
                 channel_id, to_address, amount,
+                "--packet-timeout-height", "1-1000000",
             ],
             opts,
         )
