@@ -37,4 +37,8 @@ docker run --rm --platform "$PLATFORM" \
       --bin ict-ci --example ibc_transfer --example polytone
   "
 
+case "$PLATFORM" in
+  linux/amd64|linux/x86_64) export ICT_RS_TARBALL_NAME=ict-ci-linux-x86_64.tar.gz ;;
+  linux/arm64|linux/aarch64) export ICT_RS_TARBALL_NAME=ict-ci-linux-aarch64.tar.gz ;;
+esac
 CARGO_TARGET_DIR="$ROOT/$TDIR" "$ROOT/scripts/ci/pack-bins.sh" "$OUTDIR"
