@@ -701,7 +701,7 @@ impl ChainNode {
             &[
                 "tx", "ibc-transfer", "transfer", "transfer",
                 channel_id, to_address, amount,
-                "--packet-timeout-height", "1-1000000",
+                "--absolute-timeouts", "--packet-timeout-timestamp", "0", "--packet-timeout-height", "1-1000000",
             ],
             opts,
         )
