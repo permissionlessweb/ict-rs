@@ -657,8 +657,14 @@ async fn workflow_membership(
         return Ok(());
     }
 
-    wait_for_blocks(chain, 8).await?;
-    let after_join = bonded_rows(&query_json(chain, &["leanval", "bonded-set", "0"]).await?);
+    let mut after_join = 0;
+    for _ in 0..12 {
+        wait_for_blocks(chain, 1).await?;
+        after_join = bonded_rows(&query_json(chain, &["leanval", "bonded-set", "0"]).await?);
+        if after_join >= bs_before + 2 {
+            break;
+        }
+    }
     println!("  [churn] BondedSet after JOIN rows={after_join} (before={bs_before})");
     if after_join < bs_before + 2 {
         caps.rec(
