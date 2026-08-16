@@ -145,6 +145,7 @@ impl HermesRelayer {
                  account_prefix = '{account_prefix}'\n\
                  key_name = '{key_name}'\n\
                  store_prefix = '{store_prefix}'\n\
+                 compat_mode = '0.38'\n\
                  default_gas = {default_gas}\n\
                  max_gas = {max_gas}\n\
                  gas_multiplier = {gas_multiplier}\n\
@@ -661,10 +662,17 @@ impl Relayer for HermesRelayer {
             "create channel output"
         );
 
-        // Parse channel IDs
-        if let Ok((ch_a, ch_b)) = parse_channel_ids_from_stdout(&stdout) {
-            info!(relayer = "hermes", channel_a = %ch_a, channel_b = %ch_b, "Channel created");
-        }
+        // Parse channel IDs — without them the transfer CLI falls through to IBC v2.
+        let (ch_a, ch_b) = parse_channel_ids_from_stdout(&stdout).map_err(|e| {
+            IctError::Relayer {
+                relayer: "hermes".to_string(),
+                source: anyhow::anyhow!(
+                    "create channel produced no channel ids: {e}; stdout={stdout}; stderr={}",
+                    output.stderr_str()
+                ),
+            }
+        })?;
+        info!(relayer = "hermes", channel_a = %ch_a, channel_b = %ch_b, "Channel created");
 
         // Store port IDs
         let mut paths = self.paths.lock().unwrap();
@@ -815,7 +823,7 @@ impl RelayerCommander for HermesCommander {
     fn default_image(&self) -> DockerImage {
         DockerImage {
             repository: "ghcr.io/informalsystems/hermes".to_string(),
-            version: "1.8.2".to_string(),
+            version: "1.13.2".to_string(),
             uid_gid: Some("1000:1000".to_string()),
         }
     }
