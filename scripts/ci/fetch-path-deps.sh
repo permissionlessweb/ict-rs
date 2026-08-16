@@ -22,3 +22,4 @@ ensure "$PARENT/tendermint-rs"   https://github.com/permissionlessweb/tendermint
 ensure "$PARENT/cw-orchestrator" https://github.com/permissionlessweb/cw-orchestrator.git cw3
 ensure "$PARENT/terp-rs"         https://github.com/permissionlessweb/terp-rs.git         feat/zk-wasmvm
 ensure "$PARENT/ibc-proto-rs"    https://github.com/permissionlessweb/ibc-proto-rs.git    main
+ensure "$PARENT/o-line"           https://github.com/permissionlessweb/o-line.git           master
