@@ -7,17 +7,21 @@ description = "Bridge between ict-rs and cw-orchestrator: spawn local chains via
 
 [features]
 default = []
-# O-Line deployment suite — wraps OLineTestEnv, OLineBinary, IctAkashNetwork
 oline = ["dep:o-line-sdl"]
+docker = []
 
 [dependencies]
 cw-orch-core = { path = "../../cw-orchestrator/packages/cw-orch-core" }
 cw-orch-daemon = { path = "../../cw-orchestrator/cw-orch-daemon" }
-ict-rs = { path = "../ict-rs", features = ["docker"] }
-
-# O-Line suite — wraps OLineTestEnv, OLineBinary, IctAkashNetwork for test suites
+ict-rs = { path = "../ict-rs", features = ["docker", "terp", "testing"] }
 o-line-sdl = { path = "../../o-line", features = ["interface", "testing"], optional = true }
-
 thiserror = "2"
-tokio = { version = "1", features = ["rt"] }
+tokio = { version = "1", features = ["rt", "rt-multi-thread", "macros"] }
 tracing = "0.1"
+tracing-subscriber = { version = "0.3", features = ["env-filter"] }
+serde_json = "1"
+rustls = { version = "0.23", default-features = false, features = ["ring", "std"] }
+
+[[example]]
+name = "lean_production_e2e"
+required-features = ["docker"]
