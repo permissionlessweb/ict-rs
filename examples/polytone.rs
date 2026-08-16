@@ -28,18 +28,18 @@ use std::path::PathBuf;
 
 use ict_rs::prelude::*;
 
-/// Contract wasm files (relative to ZK workspace root).
-const NOTE_WASM: &str = "terp-core/tests/interchaintest/contracts/polytone_note.wasm";
-const VOICE_WASM: &str = "terp-core/tests/interchaintest/contracts/polytone_voice.wasm";
-const PROXY_WASM: &str = "terp-core/tests/interchaintest/contracts/polytone_proxy.wasm";
-const TESTER_WASM: &str = "terp-core/tests/interchaintest/contracts/polytone_tester.wasm";
+/// Contract wasm files (relative to the terp-core repo root).
+const NOTE_WASM: &str = "tests/interchaintest/contracts/polytone_note.wasm";
+const VOICE_WASM: &str = "tests/interchaintest/contracts/polytone_voice.wasm";
+const PROXY_WASM: &str = "tests/interchaintest/contracts/polytone_proxy.wasm";
+const TESTER_WASM: &str = "tests/interchaintest/contracts/polytone_tester.wasm";
 
 /// Docker image to use. Override with TERP_IMAGE env var.
 fn terp_image() -> DockerImage {
     let repo = std::env::var("TERP_IMAGE_REPO")
         .unwrap_or_else(|_| "terpnetwork/terp-core".to_string());
     let version = std::env::var("TERP_IMAGE_VERSION")
-        .unwrap_or_else(|_| "local-zk".to_string());
+        .unwrap_or_else(|_| "local".to_string());
     DockerImage {
         repository: repo,
         version,
@@ -74,24 +74,36 @@ fn terp_chain_config(chain_id: &str) -> ChainConfig {
     }
 }
 
-/// Resolve the ZK workspace root (parent of terp-core/).
-fn resolve_zk_root() -> Result<PathBuf, Box<dyn std::error::Error>> {
-    if let Ok(root) = std::env::var("ZK_ROOT") {
-        let p = PathBuf::from(root);
-        if p.exists() {
-            return Ok(p);
+/// Directory that contains `tests/interchaintest/contracts/`.
+/// Prefers runtime env (CI artifact jobs) over compile-time CARGO_MANIFEST_DIR.
+fn resolve_terp_core() -> Result<PathBuf, Box<dyn std::error::Error>> {
+    let marker = "tests/interchaintest/contracts/polytone_note.wasm";
+    let mut cands = Vec::new();
+    for key in ["TERP_CORE", "GITHUB_WORKSPACE"] {
+        if let Ok(v) = std::env::var(key) {
+            cands.push(PathBuf::from(v));
         }
     }
+    if let Ok(z) = std::env::var("ZK_ROOT") {
+        cands.push(PathBuf::from(z).join("terp-core"));
+        cands.push(PathBuf::from(z));
+    }
+    if let Ok(cwd) = std::env::current_dir() {
+        cands.push(cwd);
+    }
     let mut dir = PathBuf::from(env!("CARGO_MANIFEST_DIR"));
-    for _ in 0..6 {
-        if dir.join("terp-core").exists() {
-            return Ok(dir);
-        }
+    for _ in 0..8 {
+        cands.push(dir.clone());
         if !dir.pop() {
             break;
         }
     }
-    Err("Cannot find ZK workspace root. Set ZK_ROOT env var.".into())
+    for p in cands {
+        if p.join(marker).is_file() {
+            return Ok(p);
+        }
+    }
+    Err("Cannot find terp-core (missing tests/interchaintest/contracts/*.wasm). Set TERP_CORE.".into())
 }
 
 /// Get a key's bech32 address from a chain.
@@ -312,7 +324,7 @@ fn base64_encode(data: &[u8]) -> String {
 
 /// Run the polytone test.
 async fn run_test(ic: &mut Interchain) -> Result<(), Box<dyn std::error::Error>> {
-    let zk_root = resolve_zk_root()?;
+    let zk_root = resolve_terp_core()?;
 
     // Verify wasm files exist
     let note_host = zk_root.join(NOTE_WASM);

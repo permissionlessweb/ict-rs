@@ -1,40 +1,27 @@
 # ict-rs in CI
 
-Goal: **one compile** of the ict-rs example binaries, then many jobs only *run* them against a prebuilt chain image.
+One compile of the example binaries, then jobs only *run* them against a prebuilt chain image.
 
 ## Shared binary
 
 ```sh
 just ci-build
-# produces:
-#   target/release/ict-ci
-#   target/release/examples/{ibc_transfer,polytone,cosmos_upgrade}
+# target/release/ict-ci
+# target/release/examples/{ibc_transfer,polytone}
 
 ICT_CI_BIN_DIR=target/release/examples ./target/release/ict-ci run polytone
 ```
 
-`ict-ci` does not rebuild. It execs the named example and forwards `TERP_IMAGE_*` / `ICT_UPGRADE_*`.
+`ict-ci list` and `just ci-build` are the same two suites. Do not `cargo run --example` in a matrix.
 
-## Cache keys
+## Image
 
-| Layer | Key | Shared by |
-|-------|-----|-----------|
-| Cargo registry + `target/` | `ict-rs/Cargo.lock` + rustc | `ci-build` job only |
-| Example + `ict-ci` binaries | artifact `ict-rs-bins` | all e2e matrix jobs |
-| Chain image | artifact `terp-docker-image` | all e2e matrix jobs |
+One tag: `terpnetwork/terp-core:local`. Override with `TERP_IMAGE_REPO` / `TERP_IMAGE_VERSION`.
 
-Do **not** `cargo run --example` in the matrix. That recompiles per suite.
+## Wasm (polytone)
 
-## Submodules (from terp-core)
+Set `TERP_CORE` to the terp-core repo root (CI: `$GITHUB_WORKSPACE`). Do not rely on `CARGO_MANIFEST_DIR` after downloading a prebuilt binary.
 
-Path deps: `cosmos-rust`, `tendermint-rs`, `cw-orchestrator`, `terp-rs`, `ibc-proto-rs`.
+## Path-deps
 
-```sh
-git submodule update --init --depth 1 \
-  crates/ict-rs crates/cosmos-rust crates/tendermint-rs \
-  crates/cw-orchestrator crates/terp-rs crates/ibc-proto-rs
-```
-
-## Image tags
-
-Examples default to `terpnetwork/terp-core:local-zk`. CI should tag the built image as both `local` and `local-zk`.
+terp-core does not store `crates/*` gitlinks. CI clones by URL via `scripts/ci/ict-rs-submodules.sh`.

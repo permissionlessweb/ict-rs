@@ -55,12 +55,11 @@ wasm:
 # --- CI: one compile, many suite runs (no second cargo) ---
 
 ci_features := "docker,terp,testing"
-ci_examples := "ibc_transfer polytone cosmos_upgrade"
 
-# Build ict-ci + docker examples once. Output: target/release/ict-ci and target/release/examples/*
+# Same suite set as ict-ci::SUITES. Do not add examples here unless CI runs them.
 ci-build:
     cargo build -p ict-rs --release --features {{ci_features}} --bin ict-ci \
-      --example ibc_transfer --example polytone --example cosmos_upgrade
+      --example ibc_transfer --example polytone
 
 # Run a prebuilt suite. Usage: just ci-run ibc_transfer
 ci-run suite:

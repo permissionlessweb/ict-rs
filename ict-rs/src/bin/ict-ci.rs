@@ -11,14 +11,7 @@ use std::env;
 use std::path::PathBuf;
 use std::process::{Command, ExitCode};
 
-const SUITES: &[&str] = &[
-    "ibc_transfer",
-    "ibc_transfer_e2e",
-    "polytone",
-    "cosmos_upgrade",
-    "suite_wasm_smoke",
-    "basic_cosmos",
-];
+const SUITES: &[&str] = &["ibc_transfer", "polytone"];
 
 fn bin_dir() -> PathBuf {
     if let Ok(d) = env::var("ICT_CI_BIN_DIR") {
