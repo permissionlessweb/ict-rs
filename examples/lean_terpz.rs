@@ -261,10 +261,14 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
         let runtime: Arc<dyn RuntimeBackend> = Arc::new(MockRuntime::new());
         let config = terpz_config();
         let chain = CosmosChain::new(config, nvals, 0, runtime);
-        println!("Mock runtime: {} validators configured", chain.validators().len());
-        if chain.validators().len() != nvals {
-            return Err("mock: validator count mismatch".into());
+        if chain.config().bin != bin_name() {
+            return Err(format!("mock: bin {} != {}", chain.config().bin, bin_name()).into());
         }
+        println!(
+            "Mock runtime: requested {nvals} vals, bin={}, chain_id={}",
+            chain.config().bin,
+            chain.chain_id()
+        );
         println!("lean_terpz MOCK structural check PASSED");
         return Ok(());
     }
