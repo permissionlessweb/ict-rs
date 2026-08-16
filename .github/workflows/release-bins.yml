@@ -1,0 +1,76 @@
+name: release-bins
+
+on:
+  push:
+    tags:
+      - "v*"
+  workflow_dispatch:
+
+permissions:
+  contents: write
+
+jobs:
+  linux-x86_64:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout ict-rs into sibling layout
+        uses: actions/checkout@v4
+        with:
+          path: ict-rs
+          fetch-depth: 1
+
+      - name: Fetch path-deps
+        run: bash ict-rs/scripts/ci/fetch-path-deps.sh
+
+      - name: Rust toolchain
+        uses: dtolnay/rust-toolchain@master
+        with:
+          toolchain: "1.88"
+
+      - name: Cache cargo
+        uses: Swatinem/rust-cache@v2
+        with:
+          workspaces: ict-rs
+          shared-key: ict-rs-release-bins
+          cache-targets: true
+
+      - name: Install just
+        uses: extractions/setup-just@v2
+
+      - name: Build ict-ci + CI suites
+        working-directory: ict-rs
+        run: just ci-build
+        env:
+          CARGO_TERM_COLOR: always
+
+      - name: Pack tarball
+        run: |
+          STAGE="$RUNNER_TEMP/ict-bins"
+          mkdir -p "$STAGE/examples"
+          cp ict-rs/target/release/ict-ci "$STAGE/ict-ci"
+          cp ict-rs/target/release/examples/ibc_transfer "$STAGE/examples/"
+          cp ict-rs/target/release/examples/polytone "$STAGE/examples/"
+          chmod +x "$STAGE/ict-ci" "$STAGE/examples/"*
+          tar -C "$STAGE" -czf "$RUNNER_TEMP/ict-ci-linux-x86_64.tar.gz" ict-ci examples
+          ls -lh "$RUNNER_TEMP/ict-ci-linux-x86_64.tar.gz"
+
+      - name: Upload workflow artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: ict-ci-linux-x86_64
+          path: ${{ runner.temp }}/ict-ci-linux-x86_64.tar.gz
+          retention-days: 30
+
+      - name: Publish GitHub Release (tags only)
+        if: startsWith(github.ref, 'refs/tags/')
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          TAG="${GITHUB_REF_NAME}"
+          gh release create "$TAG" \
+            --repo "${{ github.repository }}" \
+            --title "$TAG" \
+            --notes "Prebuilt ict-ci + ibc_transfer/polytone examples (linux-x86_64, glibc)." \
+            "$RUNNER_TEMP/ict-ci-linux-x86_64.tar.gz#ict-ci-linux-x86_64.tar.gz" \
+            || gh release upload "$TAG" --repo "${{ github.repository }}" --clobber \
+              "$RUNNER_TEMP/ict-ci-linux-x86_64.tar.gz#ict-ci-linux-x86_64.tar.gz"
