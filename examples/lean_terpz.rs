@@ -114,6 +114,7 @@ fn workflow_on(enabled: &[String], name: &str) -> bool {
 
 fn pubkey_b64_from_obj(pk: &serde_json::Value) -> Option<String> {
     pk.get("key")
+        .or_else(|| pk.get("value"))
         .and_then(|k| k.as_str())
         .filter(|s| !s.is_empty())
         .map(|s| s.to_string())
