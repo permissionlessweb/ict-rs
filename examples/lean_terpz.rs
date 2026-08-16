@@ -364,18 +364,12 @@ async fn workflow_staking(chain: &CosmosChain, nvals: usize) -> Result<(), Box<d
         list.len(),
         bonded
     );
-    let owns = owns_valset() || workflow_on(&enabled_workflows(), "lean-owns");
-    if !owns && list.len() < nvals {
-        return Err(format!("staking validators {} < {nvals}", list.len()).into());
-    }
-    if owns && list.is_empty() {
-        return Err("owns: staking has zero validators".into());
-    }
-    if owns && list.len() < nvals {
-        println!(
-            "  [staking] owns=true: x/staking count {} < {nvals} Comet nodes (Lean VP is BondedSet)",
+    if list.len() < nvals {
+        return Err(format!(
+            "staking validators {} < {nvals} (genesis must collect N gentxs)",
             list.len()
-        );
+        )
+        .into());
     }
     if bonded == 0 {
         return Err("no bonded validators".into());

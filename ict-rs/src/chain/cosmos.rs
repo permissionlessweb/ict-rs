@@ -374,7 +374,6 @@ impl CosmosChain {
         let primary = self.primary_node()?;
 
         if self.validators.len() > 1 {
-            let gentx_dir = format!("{}/config/gentx", primary.home_dir);
             for (i, node) in self.validators.iter().enumerate().skip(1) {
                 // Add other validators' accounts to primary's genesis (real denom)
                 let address = node.get_key_address(key_name).await?;
@@ -391,11 +390,18 @@ impl CosmosChain {
                     });
                 }
 
-                // Copy gentx files from validator N to primary
-                let src_dir = format!("{}/config/gentx", node.home_dir);
-                let cmd = format!("cp {src_dir}/*.json {gentx_dir}/ 2>/dev/null || true");
-                primary.exec_raw(&["sh", "-c", &cmd], &[]).await?;
-                debug!(validator = i, "Copied gentx to primary");
+                // Each validator volume is private. `cp` on primary cannot see
+                // peer homes even when the in-container path string matches.
+                let copied = self.copy_gentxs_to_primary(node, primary).await?;
+                if copied == 0 {
+                    return Err(IctError::Chain {
+                        chain_id: self.cfg.chain_id.clone(),
+                        source: anyhow::anyhow!(
+                            "validator {i} produced no gentx files to collect (cross-volume copy)"
+                        ),
+                    });
+                }
+                info!(validator = i, copied, "Copied gentx to primary");
             }
         }
 
@@ -457,6 +463,43 @@ impl CosmosChain {
             });
         }
 
+        {
+            let genesis_path = format!("{}/config/genesis.json", primary.home_dir);
+            let dumped = primary.exec_raw(&["cat", &genesis_path], &[]).await?;
+            let genesis: serde_json::Value = serde_json::from_slice(&dumped.stdout).map_err(|e| {
+                IctError::Chain {
+                    chain_id: self.cfg.chain_id.clone(),
+                    source: anyhow::anyhow!("parse genesis after collect-gentxs: {e}"),
+                }
+            })?;
+            let n_txs = genesis
+                .pointer("/app_state/genutil/gen_txs")
+                .and_then(|v| v.as_array())
+                .map(|a| a.len())
+                .unwrap_or(0);
+            let n_stake = genesis
+                .pointer("/app_state/staking/validators")
+                .and_then(|v| v.as_array())
+                .map(|a| a.len())
+                .unwrap_or(0);
+            if n_txs < self.validators.len() {
+                return Err(IctError::Chain {
+                    chain_id: self.cfg.chain_id.clone(),
+                    source: anyhow::anyhow!(
+                        "expected >= {} genesis gentxs for {} validators, got gen_txs={n_txs} staking.validators={n_stake}",
+                        self.validators.len(),
+                        self.validators.len()
+                    ),
+                });
+            }
+            info!(
+                gen_txs = n_txs,
+                staking_validators = n_stake,
+                want = self.validators.len(),
+                "Collected genesis validators"
+            );
+        }
+
         // Phase 3: Replace "stake" with configured denom throughout genesis.
         // This is what Go ICT does at cosmos_chain.go:994.
         {
@@ -488,6 +531,56 @@ impl CosmosChain {
 
         info!(chain_id = %self.cfg.chain_id, "Genesis pipeline complete");
         Ok(())
+    }
+
+    /// Copy genesis txs from `src` onto `primary`.
+    ///
+    /// Nodes do not share a filesystem. Streaming via base64 (same as
+    /// [`Self::distribute_genesis`]) is required for N>1 genesis validators.
+    async fn copy_gentxs_to_primary(
+        &self,
+        src: &ChainNode,
+        primary: &ChainNode,
+    ) -> Result<usize> {
+        let src_dir = format!("{}/config/gentx", src.home_dir);
+        let dest_dir = format!("{}/config/gentx", primary.home_dir);
+        let list = src
+            .exec_raw(
+                &[
+                    "sh",
+                    "-c",
+                    &format!("ls -1 {src_dir}/*.json 2>/dev/null || true"),
+                ],
+                &[],
+            )
+            .await?;
+        let mut n = 0usize;
+        for path in list.stdout_str().lines() {
+            let path = path.trim();
+            if path.is_empty() {
+                continue;
+            }
+            let fname = path.rsplit('/').next().unwrap_or("gentx.json");
+            let raw = src.exec_raw(&["cat", path], &[]).await?;
+            if raw.exit_code != 0 || raw.stdout.is_empty() {
+                return Err(IctError::ExecFailed {
+                    exit_code: raw.exit_code,
+                    stderr: format!("read gentx {path}: {}", raw.stderr_str()),
+                });
+            }
+            let b64 = base64_encode(&raw.stdout);
+            let dest = format!("{dest_dir}/{fname}");
+            let cmd = format!("mkdir -p {dest_dir} && echo '{b64}' | base64 -d > {dest}");
+            let wr = primary.exec_raw(&["sh", "-c", &cmd], &[]).await?;
+            if wr.exit_code != 0 {
+                return Err(IctError::ExecFailed {
+                    exit_code: wr.exit_code,
+                    stderr: format!("write gentx {dest}: {}", wr.stderr_str()),
+                });
+            }
+            n += 1;
+        }
+        Ok(n)
     }
 
     /// Copy genesis from the primary validator to all other nodes.
@@ -732,6 +825,15 @@ impl CosmosChain {
             return Err(IctError::Chain {
                 chain_id: self.cfg.chain_id.clone(),
                 source: anyhow::anyhow!("genesis has no gentx entries"),
+            });
+        }
+        if gen_txs < self.num_validators {
+            return Err(IctError::Chain {
+                chain_id: self.cfg.chain_id.clone(),
+                source: anyhow::anyhow!(
+                    "genesis gen_txs {gen_txs} < num_validators {}",
+                    self.num_validators
+                ),
             });
         }
 
