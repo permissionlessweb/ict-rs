@@ -508,11 +508,78 @@ async fn run(
         "cw-lean-verifier + proof_instance_verify not exercised",
     );
 
+    // loop_id=aggregate (RESEARCH-PACK-CONSENSUS-OBJECT): one verify for N
+    // proofs. Dummy per-subject checksums (3a+5b+7 / DSTW costume) are FAIL.
+    // BondedSet 2->4 is not aggregation.
+    probe_aggregate(chain, &mut caps, n).await?;
+
     caps.print_matrix();
     if caps.must_failed() {
         return Err("lean_production_e2e MUST caps failed — see ELEVATION MATRIX".into());
     }
     println!("lean_production_e2e PASSED (gaps remain — not product-done)");
+    Ok(())
+}
+
+
+/// loop_id=aggregate: one host verify for N proofs. Dummy per-subject FAIL.
+async fn probe_aggregate(
+    chain: &CosmosChain,
+    caps: &mut Caps,
+    n: usize,
+) -> Result<(), Box<dyn std::error::Error>> {
+    let n_proofs = n.max(2);
+    let mut dummy_ok = 0usize;
+    for i in 0..n_proofs {
+        // Per-subject Dummy costume — must not CheckTx as an aggregate.
+        let mut blob = b"DSTW".to_vec();
+        blob.push(1);
+        blob.extend_from_slice(&(i as u64).to_be_bytes());
+        // c = 3a+5b+7 costume (not a named Stwo/FRI fold).
+        blob.extend_from_slice(&3u64.to_be_bytes());
+        blob.extend_from_slice(&5u64.to_be_bytes());
+        blob.extend_from_slice(&7u64.to_be_bytes());
+        let resp = broadcast_raw(chain, &blob).await.unwrap_or_default();
+        if tx_ok(&resp) {
+            dummy_ok += 1;
+        }
+    }
+
+    let agg_q = query_json(chain, &["leanval", "aggregate-proof"]).await;
+    let one_object = match &agg_q {
+        Ok(v) => v
+            .get("proofs")
+            .and_then(|p| p.as_array())
+            .map(|a| a.len() == 1)
+            .unwrap_or(false)
+            || v.get("aggregate").is_some()
+            || v.get("folded").is_some(),
+        Err(_) => false,
+    };
+
+    if dummy_ok > 0 {
+        caps.rec(
+            "loop_aggregate",
+            "FAIL",
+            format!(
+                "Dummy per-subject CheckTx accepted {dummy_ok}/{n_proofs} (3a+5b+7) — not one verify for N"
+            ),
+        );
+    } else if one_object {
+        caps.rec(
+            "loop_aggregate",
+            "PASS",
+            format!("one aggregate object; Dummy per-subject rejected ({n_proofs})"),
+        );
+    } else {
+        caps.rec(
+            "loop_aggregate",
+            "GAP",
+            format!(
+                "Dummy per-subject rejected ({n_proofs}); no single verify-for-N object (not BondedSet join)"
+            ),
+        );
+    }
     Ok(())
 }
 
