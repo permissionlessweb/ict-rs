@@ -40,6 +40,21 @@ fn enable_commonware() {
     {
         std::env::set_var("ICT_LEAN_CONSENSUS", "commonware");
     }
+    if std::env::var("ICT_LEAN_BLOCKS_PER_PERIOD")
+        .ok()
+        .filter(|s| !s.is_empty())
+        .is_none()
+    {
+        std::env::set_var("ICT_LEAN_BLOCKS_PER_PERIOD", "8");
+    }
+}
+
+fn blocks_per_period() -> u64 {
+    std::env::var("ICT_LEAN_BLOCKS_PER_PERIOD")
+        .ok()
+        .and_then(|s| s.parse().ok())
+        .filter(|n| *n > 0)
+        .unwrap_or(8)
 }
 
 fn refuse_mock() -> Result<(), Box<dyn std::error::Error>> {
@@ -351,6 +366,24 @@ async fn broadcast_raw_all(
     Ok(last)
 }
 
+async fn wait_until_height(
+    chain: &CosmosChain,
+    target: u64,
+    secs: u64,
+) -> Result<u64, Box<dyn std::error::Error>> {
+    let deadline = Instant::now() + Duration::from_secs(secs);
+    loop {
+        let h = chain.height().await?;
+        if h >= target {
+            return Ok(h);
+        }
+        if Instant::now() > deadline {
+            return Err(format!("height wait for {target} stuck at {h}").into());
+        }
+        tokio::time::sleep(Duration::from_millis(300)).await;
+    }
+}
+
 async fn wait_height(
     chain: &CosmosChain,
     add: u64,
@@ -405,7 +438,11 @@ impl Caps {
         }
     }
     fn must_failed(&self) -> bool {
-        self.rows.iter().any(|(_, st, _)| *st == "FAIL")
+        let epoch_ok = self
+            .rows
+            .iter()
+            .any(|(id, st, _)| *id == "epoch_join_vote" && *st == "PASS");
+        self.rows.iter().any(|(_, st, _)| *st == "FAIL") || !epoch_ok
     }
 }
 
@@ -560,7 +597,7 @@ async fn fn_join_bytes(chain: &CosmosChain) -> Result<Vec<u8>, Box<dyn std::erro
         .ok_or("show-validator")?;
     let subj = decode_pk(&pk)?;
     let h = chain.height().await? as u64;
-    Ok(encode_join(h / 600, &subj, 1))
+    Ok(encode_join(h / blocks_per_period(), &subj, 1))
 }
 
 fn commit_sigs(block: &serde_json::Value) -> usize {
@@ -892,6 +929,40 @@ async fn gate_quorum_stall_resume_join(
                 format!("JOIN added VP but consensus stalled ({e})"),
             );
         }
+    }
+
+    // JOIN during epoch N only updates BondedSet. The FN votes when the
+    // simplex engine restarts at the next period with bits=1 pubkeys.
+    let period = blocks_per_period();
+    let h_now = chain.height().await.unwrap_or(h_join);
+    let boundary = (h_now / period + 1) * period;
+    match wait_until_height(chain, boundary, 90).await {
+        Ok(h_ep) => match wait_full_commit(chain, 5, 45).await {
+            Ok(n) => match wait_height(chain, 1, 40).await {
+                Ok(h2) => caps.rec(
+                    "epoch_join_vote",
+                    "PASS",
+                    format!(
+                        "after JOIN bits {bits0}→{bits1} height crossed {period} → {h_ep}; last_commit={n} (≥5) and height → {h2}"
+                    ),
+                ),
+                Err(e) => caps.rec(
+                    "epoch_join_vote",
+                    "FAIL",
+                    format!("height did not advance after epoch vote: {e}"),
+                ),
+            },
+            Err(e) => caps.rec(
+                "epoch_join_vote",
+                "FAIL",
+                format!("last_commit < 5 after period boundary: {e}"),
+            ),
+        },
+        Err(e) => caps.rec(
+            "epoch_join_vote",
+            "FAIL",
+            format!("did not cross period {period}: {e}"),
+        ),
     }
     Ok(())
 }

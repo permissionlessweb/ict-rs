@@ -708,11 +708,20 @@ impl CosmosChain {
             boots.push(format!("{}@{}", hex, node.p2p_address()));
         }
         let boot = boots.join(",");
+        let period = std::env::var("ICT_LEAN_BLOCKS_PER_PERIOD")
+            .ok()
+            .filter(|s| !s.is_empty())
+            .unwrap_or_else(|| "8".to_string());
+        let catchup = self
+            .validators
+            .first()
+            .map(|v| format!("LEAN_CW_CATCHUP={}\n", v.rpc_address()))
+            .unwrap_or_default();
         for node in self.validators.iter().chain(self.full_nodes.iter()) {
-            let skip = if node.is_validator { "" } else { "LEAN_CW_SKIP=1\n" };
             let body = format!(
-                "LEAN_CONSENSUS=commonware\n{skip}LEAN_CW_LISTEN=0.0.0.0:26656\nLEAN_CW_PUBLIC={host}:{p2p}\nLEAN_CW_BOOTSTRAPPERS={boot}\n",
-                skip = skip,
+                "LEAN_CONSENSUS=commonware\nLEAN_BLOCKS_PER_PERIOD={period}\n{catchup}LEAN_CW_LISTEN=0.0.0.0:26656\nLEAN_CW_PUBLIC={host}:{p2p}\nLEAN_CW_BOOTSTRAPPERS={boot}\n",
+                period = period,
+                catchup = catchup,
                 host = node.hostname,
                 p2p = node.ports.p2p,
             );
