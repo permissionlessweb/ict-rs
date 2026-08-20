@@ -139,6 +139,9 @@ impl CosmosChain {
             );
             self.validators.push(node);
         }
+        for n in &mut self.validators {
+            n.start_args = self.cfg.additional_start_args.clone();
+        }
 
         // Create full nodes
         for i in 0..self.num_full_nodes {
@@ -157,6 +160,9 @@ impl CosmosChain {
                 self.cfg.gas_adjustment,
             );
             self.full_nodes.push(node);
+        }
+        for n in &mut self.full_nodes {
+            n.start_args = self.cfg.additional_start_args.clone();
         }
     }
 
@@ -671,6 +677,51 @@ impl CosmosChain {
             node.exec_raw(&["sh", "-c", &consensus_cmd], &[]).await?;
         }
 
+        self.write_lean_cw_env().await?;
+
+        Ok(())
+    }
+
+    async fn write_lean_cw_env(&self) -> Result<()> {
+        let mode = std::env::var("ICT_LEAN_CONSENSUS").unwrap_or_default();
+        if mode != "commonware" && mode != "cw" && mode != "simplex" {
+            return Ok(());
+        }
+        let mut boots = Vec::new();
+        for node in self.validators.iter() {
+            let key_path = format!("{}/config/priv_validator_key.json", node.home_dir);
+            let out = node.exec_raw(&["cat", &key_path], &[]).await?;
+            let json: serde_json::Value =
+                serde_json::from_slice(&out.stdout).unwrap_or(serde_json::Value::Null);
+            let b64 = json
+                .pointer("/pub_key/value")
+                .and_then(|v| v.as_str())
+                .unwrap_or("");
+            if b64.is_empty() {
+                continue;
+            }
+            let raw = b64dec(b64);
+            if raw.len() != 32 {
+                continue;
+            }
+            let hex: String = raw.iter().map(|b| format!("{:02x}", b)).collect();
+            boots.push(format!("{}@{}", hex, node.p2p_address()));
+        }
+        let boot = boots.join(",");
+        for node in self.validators.iter().chain(self.full_nodes.iter()) {
+            let skip = if node.is_validator { "" } else { "LEAN_CW_SKIP=1\n" };
+            let body = format!(
+                "LEAN_CONSENSUS=commonware\n{skip}LEAN_CW_LISTEN=0.0.0.0:26656\nLEAN_CW_PUBLIC={host}:{p2p}\nLEAN_CW_BOOTSTRAPPERS={boot}\n",
+                skip = skip,
+                host = node.hostname,
+                p2p = node.ports.p2p,
+            );
+            let b64 = base64_encode(body.as_bytes());
+            let path = format!("{}/config/lean-cw.env", node.home_dir);
+            let cmd = format!("echo '{b64}' | base64 -d > {path}");
+            node.exec_raw(&["sh", "-c", &cmd], &[]).await?;
+        }
+        tracing::info!(bootstrappers = %boot, "wrote lean-cw.env");
         Ok(())
     }
 
@@ -1680,4 +1731,11 @@ impl Chain for CosmosChain {
             .find(|sc| sc.config.name == sidecar_name)
             .map(|sc| sc.hostname())
     }
+}
+
+fn b64dec(s: &str) -> Vec<u8> {
+    use base64::Engine;
+    base64::engine::general_purpose::STANDARD
+        .decode(s.trim())
+        .unwrap_or_default()
 }

@@ -79,6 +79,7 @@ pub struct ChainNode {
     pub gas_prices: String,
     /// Gas adjustment multiplier (e.g. 1.5).
     pub gas_adjustment: f64,
+    pub start_args: Vec<String>,
     /// Runtime backend reference.
     pub runtime: Arc<dyn RuntimeBackend>,
 }
@@ -136,6 +137,7 @@ impl ChainNode {
             genesis_style,
             gas_prices: gas_prices.to_string(),
             gas_adjustment,
+            start_args: Vec::new(),
             runtime,
         }
     }
@@ -337,6 +339,30 @@ impl ChainNode {
         Ok(())
     }
 
+    /// Freeze the node via the runtime cgroup freezer (Docker pause).
+    ///
+    /// This suspends every process in the container, including Comet voting.
+    /// `kill -STOP 1` is not a substitute: PID 1 is often an entrypoint, not `terpz`.
+    /// `exec_cmd` / `exec_raw` fail while paused; query a live peer instead.
+    pub async fn pause_container(&self) -> Result<()> {
+        let id = self.container_id.as_ref().ok_or_else(|| IctError::Chain {
+            chain_id: self.chain_id.clone(),
+            source: anyhow::anyhow!("node {} has no container ID", self.hostname),
+        })?;
+        info!(node = %self.hostname, "Pausing container (cgroup freeze)");
+        self.runtime.pause_container(id).await
+    }
+
+    /// Resume a node previously frozen with [`pause_container`].
+    pub async fn unpause_container(&self) -> Result<()> {
+        let id = self.container_id.as_ref().ok_or_else(|| IctError::Chain {
+            chain_id: self.chain_id.clone(),
+            source: anyhow::anyhow!("node {} has no container ID", self.hostname),
+        })?;
+        info!(node = %self.hostname, "Unpausing container");
+        self.runtime.unpause_container(id).await
+    }
+
     /// Remove the node container.
     pub async fn remove_container(&mut self) -> Result<()> {
         if let Some(id) = self.container_id.take() {
@@ -444,8 +470,14 @@ impl ChainNode {
         // Redirect stdout/stderr to a log file so we can read it for diagnostics
         // (docker logs only captures the main container process, not exec'd processes).
         let log_file = format!("{}/chain.log", self.home_dir);
+        let env_file = format!("{}/config/lean-cw.env", self.home_dir);
+        let extra = self
+            .start_args
+            .iter()
+            .map(|s| format!(" {s}"))
+            .collect::<String>();
         let cmd = format!(
-            "{} start --home {} > {} 2>&1",
+            "if [ -f {env_file} ]; then set -a; . {env_file}; set +a; fi; {} start --home {}{extra} > {} 2>&1",
             self.chain_bin, self.home_dir, log_file,
         );
         debug!(node = %self.hostname, cmd = %cmd, "Starting chain binary (detached)");
