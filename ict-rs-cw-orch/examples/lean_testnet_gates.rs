@@ -137,6 +137,7 @@ fn modify_genesis(_cfg: &ChainConfig, raw: Vec<u8>) -> IctResult<Vec<u8>> {
     genesis["app_state"]["leanval"] = serde_json::json!({
         "leanval_owns_valset": true,
         "genesis_subjects": subjects,
+        "blocks_per_period": 8,
     });
     serde_json::to_vec(&genesis).map_err(|e| IctError::Config(format!("encode: {e}")))
 }
@@ -243,6 +244,10 @@ fn first_operator(v: &serde_json::Value) -> Result<String, Box<dyn std::error::E
 }
 
 fn encode_join(period: u64, subject: &[u8], weight: i64) -> Vec<u8> {
+    encode_join_with_index(period, subject, weight, 4)
+}
+
+fn encode_join_with_index(period: u64, subject: &[u8], weight: i64, index: u64) -> Vec<u8> {
     let subj = if subject.len() > 255 {
         &subject[..255]
     } else {
@@ -254,7 +259,51 @@ fn encode_join(period: u64, subject: &[u8], weight: i64) -> Vec<u8> {
     out.push(subj.len() as u8);
     out.extend_from_slice(subj);
     out.extend_from_slice(&(weight as u64).to_be_bytes());
+    if let Some(proof) = prove_valset_stwo(period, index, weight as u8) {
+        if proof.starts_with(b"DSTW") {
+            panic!("encode_join must not carry Dummy DSTW");
+        }
+        out.extend_from_slice(&proof);
+    }
     out
+}
+
+fn prove_valset_stwo(period: u64, index: u64, eb: u8) -> Option<Vec<u8>> {
+    let bin = std::env::var("LEAN_VALSET_AIR")
+        .ok()
+        .filter(|s| !s.is_empty())
+        .or_else(|| {
+            ["lean-valset-air", "/usr/local/bin/lean-valset-air"]
+                .into_iter()
+                .find(|p| std::path::Path::new(p).exists() || which(p))
+                .map(|s| s.to_string())
+        });
+    let bin = bin?;
+    let idx = format!("{index:010x}");
+    let out = std::process::Command::new(bin)
+        .args(["prove", &period.to_string(), &idx, &eb.to_string()])
+        .output()
+        .ok()?;
+    if !out.status.success() {
+        return None;
+    }
+    let p = out.stdout;
+    if p.len() >= 4 && &p[..4] == b"STWO" && !p.windows(4).any(|w| w == b"DSTW") {
+        Some(p)
+    } else {
+        None
+    }
+}
+
+fn which(name: &str) -> bool {
+    std::env::var_os("PATH")
+        .map(|p| {
+            std::env::split_paths(&p).any(|d| {
+                let c = d.join(name);
+                c.is_file()
+            })
+        })
+        .unwrap_or(false)
 }
 
 fn to_hex(b: &[u8]) -> String {
@@ -597,7 +646,13 @@ async fn fn_join_bytes(chain: &CosmosChain) -> Result<Vec<u8>, Box<dyn std::erro
         .ok_or("show-validator")?;
     let subj = decode_pk(&pk)?;
     let h = chain.height().await? as u64;
-    Ok(encode_join(h / blocks_per_period(), &subj, 1))
+    let bits = chain
+        .query_json(&["leanval", "membership-sot"])
+        .await
+        .ok()
+        .map(|v| bits_set(&v) as u64)
+        .unwrap_or(4);
+    Ok(encode_join_with_index(h / blocks_per_period(), &subj, 1, bits))
 }
 
 fn commit_sigs(block: &serde_json::Value) -> usize {
@@ -619,7 +674,7 @@ fn commit_sigs(block: &serde_json::Value) -> usize {
                 .get("signature")
                 .and_then(|x| x.as_str())
                 .unwrap_or("");
-            flag == 2 || !sig.is_empty()
+            flag == 2 && !sig.is_empty() && sig != "AA==" && sig.len() >= 40
         })
         .count()
 }
@@ -645,13 +700,11 @@ async fn wait_all_caught_up(
         let h0 = chain.height().await?;
         let mut ok = true;
         lag.clear();
-        let cw = std::env::var("ICT_LEAN_CONSENSUS").unwrap_or_default();
-        let skip_fn = cw == "commonware" || cw == "cw" || cw == "simplex";
-        let nodes: Vec<_> = if skip_fn {
-            chain.validators().iter().collect()
-        } else {
-            chain.validators().iter().chain(chain.full_nodes().iter()).collect()
-        };
+        let nodes: Vec<_> = chain
+            .validators()
+            .iter()
+            .chain(chain.full_nodes().iter())
+            .collect();
         for n in nodes {
             match n.query_height().await {
                 Ok(h) if h + 1 >= h0 => {}
@@ -674,6 +727,102 @@ async fn wait_all_caught_up(
         tokio::time::sleep(Duration::from_millis(400)).await;
     }
     Err(format!("nodes not caught up: {lag}").into())
+}
+
+async fn rpc_lean_certificate(chain: &CosmosChain) -> Result<serde_json::Value, Box<dyn std::error::Error>> {
+    let url = format!("{}/lean/certificate", chain.host_rpc_address());
+    let out = std::process::Command::new("curl")
+        .args(["-sS", "--max-time", "5", &url])
+        .output()?;
+    let body = String::from_utf8_lossy(&out.stdout);
+    Ok(serde_json::from_str(json_blob(&body)).unwrap_or(serde_json::Value::Null))
+}
+
+fn join_subject_b64(join: &[u8]) -> Option<String> {
+    // JOIN | ver | period(8) | alen | subject | weight(8) | proof?
+    if join.len() < 4 + 1 + 8 + 1 {
+        return None;
+    }
+    if &join[..4] != b"JOIN" {
+        return None;
+    }
+    let alen = join[4 + 1 + 8] as usize;
+    let start = 4 + 1 + 8 + 1;
+    if join.len() < start + alen {
+        return None;
+    }
+    Some(base64_std(&join[start..start + alen]))
+}
+
+fn base64_std(b: &[u8]) -> String {
+    const T: &[u8] = b"ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789+/";
+    let mut out = String::new();
+    let mut i = 0;
+    while i < b.len() {
+        match b.len() - i {
+            1 => {
+                let x = (b[i] as u32) << 16;
+                out.push(T[(x >> 18) as usize] as char);
+                out.push(T[((x >> 12) & 63) as usize] as char);
+                out.push('=');
+                out.push('=');
+                break;
+            }
+            2 => {
+                let x = ((b[i] as u32) << 16) | ((b[i + 1] as u32) << 8);
+                out.push(T[(x >> 18) as usize] as char);
+                out.push(T[((x >> 12) & 63) as usize] as char);
+                out.push(T[((x >> 6) & 63) as usize] as char);
+                out.push('=');
+                break;
+            }
+            _ => {
+                let x = ((b[i] as u32) << 16) | ((b[i + 1] as u32) << 8) | (b[i + 2] as u32);
+                out.push(T[(x >> 18) as usize] as char);
+                out.push(T[((x >> 12) & 63) as usize] as char);
+                out.push(T[((x >> 6) & 63) as usize] as char);
+                out.push(T[(x & 63) as usize] as char);
+                i += 3;
+            }
+        }
+    }
+    out
+}
+
+fn certificate_has_pubkey(cert: &serde_json::Value, pk_b64: &str) -> bool {
+    let signers = cert
+        .pointer("/result/signers")
+        .or_else(|| cert.pointer("/signers"))
+        .and_then(|s| s.as_array());
+    let Some(signers) = signers else {
+        return false;
+    };
+    signers.iter().any(|s| {
+        s.get("pubkey")
+            .and_then(|p| p.as_str())
+            .map(|p| p == pk_b64)
+            .unwrap_or(false)
+    })
+}
+
+async fn wait_join_in_certificate(
+    chain: &CosmosChain,
+    join: &[u8],
+    secs: u64,
+) -> Result<String, Box<dyn std::error::Error>> {
+    let pk = join_subject_b64(join).ok_or("JOIN subject")?;
+    let deadline = Instant::now() + Duration::from_secs(secs);
+    let mut last = String::new();
+    while Instant::now() < deadline {
+        let cert = rpc_lean_certificate(chain).await.unwrap_or(serde_json::Value::Null);
+        last = cert.to_string().chars().take(240).collect();
+        if certificate_has_pubkey(&cert, &pk) {
+            println!("  [quorum] JOIN pubkey in certificate");
+            return Ok(pk);
+        }
+        tokio::time::sleep(Duration::from_millis(400)).await;
+    }
+    Err(format!("JOIN pubkey {pk} not in certificate ({last})").into())
 }
 
 async fn wait_full_commit(
@@ -937,13 +1086,13 @@ async fn gate_quorum_stall_resume_join(
     let h_now = chain.height().await.unwrap_or(h_join);
     let boundary = (h_now / period + 1) * period;
     match wait_until_height(chain, boundary, 90).await {
-        Ok(h_ep) => match wait_full_commit(chain, 5, 45).await {
-            Ok(n) => match wait_height(chain, 1, 40).await {
+        Ok(h_ep) => match wait_join_in_certificate(chain, &join, 45).await {
+            Ok(pk) => match wait_height(chain, 1, 40).await {
                 Ok(h2) => caps.rec(
                     "epoch_join_vote",
                     "PASS",
                     format!(
-                        "after JOIN bits {bits0}→{bits1} height crossed {period} → {h_ep}; last_commit={n} (≥5) and height → {h2}"
+                        "after JOIN bits {bits0}→{bits1} height crossed {period} → {h_ep}; JOIN pubkey {pk} in certificate and height → {h2}"
                     ),
                 ),
                 Err(e) => caps.rec(
@@ -955,7 +1104,7 @@ async fn gate_quorum_stall_resume_join(
             Err(e) => caps.rec(
                 "epoch_join_vote",
                 "FAIL",
-                format!("last_commit < 5 after period boundary: {e}"),
+                format!("JOIN pubkey missing from certificate after period boundary: {e}"),
             ),
         },
         Err(e) => caps.rec(
