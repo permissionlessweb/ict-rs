@@ -77,9 +77,10 @@ pub struct ChainNode {
     pub genesis_style: GenesisStyle,
     /// Gas prices for transactions (e.g. "0.025uakt").
     pub gas_prices: String,
+    /// Extra env for `terpd start` (e.g. CIRCUIT_EPOCH_DURATION_SECONDS).
+    pub extra_env: Vec<(String, String)>,
     /// Gas adjustment multiplier (e.g. 1.5).
     pub gas_adjustment: f64,
-    pub start_args: Vec<String>,
     /// Runtime backend reference.
     pub runtime: Arc<dyn RuntimeBackend>,
 }
@@ -136,8 +137,8 @@ impl ChainNode {
             ports: NodePorts::default(),
             genesis_style,
             gas_prices: gas_prices.to_string(),
+            extra_env: Vec::new(),
             gas_adjustment,
-            start_args: Vec::new(),
             runtime,
         }
     }
@@ -470,16 +471,23 @@ impl ChainNode {
         // Redirect stdout/stderr to a log file so we can read it for diagnostics
         // (docker logs only captures the main container process, not exec'd processes).
         let log_file = format!("{}/chain.log", self.home_dir);
-        let env_file = format!("{}/config/lean-cw.env", self.home_dir);
-        let extra = self
-            .start_args
+        let env_prefix = self
+            .extra_env
             .iter()
-            .map(|s| format!(" {s}"))
-            .collect::<String>();
-        let cmd = format!(
-            "if [ -f {env_file} ]; then set -a; . {env_file}; set +a; fi; {} start --home {}{extra} > {} 2>&1",
-            self.chain_bin, self.home_dir, log_file,
-        );
+            .map(|(k, v)| format!("{k}={v}"))
+            .collect::<Vec<_>>()
+            .join(" ");
+        let cmd = if env_prefix.is_empty() {
+            format!(
+                "{} start --home {} > {} 2>&1",
+                self.chain_bin, self.home_dir, log_file,
+            )
+        } else {
+            format!(
+                "{env_prefix} {} start --home {} > {} 2>&1",
+                self.chain_bin, self.home_dir, log_file,
+            )
+        };
         debug!(node = %self.hostname, cmd = %cmd, "Starting chain binary (detached)");
         self.runtime
             .exec_in_container_background(id, &["sh", "-c", &cmd], &[])

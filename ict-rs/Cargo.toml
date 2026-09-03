@@ -117,6 +117,16 @@ name = "integration_test"
 path = "../examples/integration_test.rs"
 
 [[example]]
+name = "circuit_deposit"
+path = "../examples/circuit_deposit.rs"
+required-features = ["testing", "terp"]
+
+[[example]]
+name = "circuit_runway_epoch"
+path = "../examples/circuit_runway_epoch.rs"
+required-features = ["docker", "testing", "terp"]
+
+[[example]]
 name = "ibc_hooks"
 path = "../examples/ibc_hooks.rs"
 
