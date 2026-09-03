@@ -140,7 +140,6 @@ impl CosmosChain {
             self.validators.push(node);
         }
         for n in &mut self.validators {
-            n.start_args = self.cfg.additional_start_args.clone();
             n.extra_env = self.cfg.env.clone();
         }
 
@@ -163,7 +162,6 @@ impl CosmosChain {
             self.full_nodes.push(node);
         }
         for n in &mut self.full_nodes {
-            n.start_args = self.cfg.additional_start_args.clone();
             n.extra_env = self.cfg.env.clone();
         }
     }
