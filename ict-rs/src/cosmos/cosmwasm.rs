@@ -180,6 +180,44 @@ pub trait CosmWasmExt: Chain {
             .map_err(|e| IctError::Config(format!("invalid query JSON: {e}")))?;
         Ok(v)
     }
+
+    /// Pay yearly circuit-upload coverage (`terpd tx wasm pay-circuit-deposit`).
+    async fn pay_circuit_deposit(&self, key_name: &str, years: u32) -> Result<Tx> {
+        let opts = self.default_tx_opts().from(key_name);
+        let years_s = years.to_string();
+        let output = self
+            .chain_exec_tx_with(
+                &["tx", "wasm", "pay-circuit-deposit", &years_s],
+                opts,
+            )
+            .await?;
+        if output.exit_code != 0 || output.stdout_str().trim().is_empty() {
+            return Err(IctError::Config(format!(
+                "pay-circuit-deposit failed (exit {}): stdout={} stderr={}",
+                output.exit_code,
+                output.stdout_str().trim(),
+                output.stderr_str().trim()
+            )));
+        }
+        parse_tx_response(&output)
+    }
+
+    /// Query circuit-upload coverage (`terpd query wasm circuit-deposit`).
+    async fn query_circuit_deposit(&self, address: &str) -> Result<serde_json::Value> {
+        let mut args: Vec<String> = vec![
+            "query".to_string(),
+            "wasm".to_string(),
+            "circuit-deposit".to_string(),
+            address.to_string(),
+        ];
+        for flag in QUERY_DEFAULT_FLAGS {
+            args.push(flag.to_string());
+        }
+        let arg_refs: Vec<&str> = args.iter().map(|s| s.as_str()).collect();
+        let output = self.chain_exec(&arg_refs).await?;
+        serde_json::from_str(output.stdout_str().trim())
+            .map_err(|e| IctError::Config(format!("invalid circuit-deposit JSON: {e}")))
+    }
 }
 
 impl<T: Chain + ?Sized> CosmWasmExt for T {}

@@ -68,7 +68,7 @@ fn terp_config() -> ChainConfig {
         )],
         sidecar_configs: Vec::new(),
         faucet: None,
-        genesis_style: GenesisStyle::Modern,
+        genesis_style: GenesisStyle::Legacy,
     }
 }
 

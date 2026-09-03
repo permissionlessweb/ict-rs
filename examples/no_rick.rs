@@ -36,6 +36,22 @@ const PROOF_REL: &str = "terp-core/tests/interchaintest/circuits/no_rick_proof.j
 /// Container-side paths where we copy the files.
 const CONTAINER_WASM: &str = "/tmp/zk_no_rick.wasm";
 const VK: &str = "/tmp/no_rick.bin";
+const CONTAINER_PARAMS: &str = "/tmp/no_rick_params.bin";
+const CONTAINER_VK_BODY: &str = "/tmp/no_rick_vk_body.bin";
+
+/// Split a monolithic [params|cs|vk|footer] blob using the 80-byte footer.
+fn split_monolithic_circuit(blob: &[u8]) -> Result<(Vec<u8>, Vec<u8>, u64), Box<dyn std::error::Error>> {
+    if blob.len() < 80 {
+        return Err("circuit blob shorter than 80-byte footer".into());
+    }
+    let ft = &blob[blob.len() - 80..];
+    let k = ft[2] as u64;
+    let param_len = u32::from_le_bytes(ft[4..8].try_into()?) as usize;
+    if param_len == 0 || param_len > blob.len() - 80 {
+        return Err(format!("invalid param_len {param_len} for blob {}", blob.len()).into());
+    }
+    Ok((blob[..param_len].to_vec(), blob[param_len..].to_vec(), k))
+}
 
 fn terp_zk_config() -> ChainConfig {
     ChainConfig {
@@ -128,7 +144,7 @@ async fn run_test(chain: &mut CosmosChain) -> Result<(), Box<dyn std::error::Err
     let fund = WalletAmount {
         address: user_addr.clone(),
         denom: "uterp".to_string(),
-        amount: 10_000_000,
+        amount: 100_000_000,
     };
     chain.send_funds("validator", &fund).await?;
     wait_for_blocks(chain, 2).await?;
@@ -139,16 +155,28 @@ async fn run_test(chain: &mut CosmosChain) -> Result<(), Box<dyn std::error::Err
     let node = chain.primary_node()?;
     node.copy_file_from_host(&wasm_host, CONTAINER_WASM).await?;
     node.copy_file_from_host(&vk_host, VK).await?;
-    println!("Copied wasm ({} bytes) and vk ({} bytes)",
+    let combined = std::fs::read(&vk_host)?;
+    let (params, vk_body, halo2_k) = split_monolithic_circuit(&combined)?;
+    let tmp = std::env::temp_dir();
+    let params_host = tmp.join("no_rick_params.bin");
+    let vk_body_host = tmp.join("no_rick_vk_body.bin");
+    std::fs::write(&params_host, &params)?;
+    std::fs::write(&vk_body_host, &vk_body)?;
+    node.copy_file_from_host(&params_host, CONTAINER_PARAMS).await?;
+    node.copy_file_from_host(&vk_body_host, CONTAINER_VK_BODY).await?;
+    println!(
+        "Copied wasm ({} bytes) and circuit params={} vk_body={} k={}",
         std::fs::metadata(&wasm_host)?.len(),
-        std::fs::metadata(&vk_host)?.len(),
+        params.len(),
+        vk_body.len(),
+        halo2_k
     );
 
-    // 4. Upload contract + VK using headstash command
-    println!("\n--- Uploading contract + VK (headstash) ---");
-    let headstash_output = chain.chain_exec(&[
-        "tx", "wasm", "headstash",
-        CONTAINER_WASM, VK,
+    // 4. Upload wasm, then params+vk via store-full-circuit (headstash CLI is gone).
+    println!("\n--- Uploading wasm (store) ---");
+    let store_output = chain.chain_exec(&[
+        "tx", "wasm", "store",
+        CONTAINER_WASM,
         "--from", "default",
         "--gas-prices", "0uterp",
         "--chain-id", "120u-1",
@@ -159,27 +187,62 @@ async fn run_test(chain: &mut CosmosChain) -> Result<(), Box<dyn std::error::Err
         "--output", "json",
         "-y",
     ]).await?;
-    println!("headstash stdout: {}", headstash_output.stdout_str().trim());
-    if !headstash_output.stderr.is_empty() {
-        println!("headstash stderr: {}", headstash_output.stderr_str().trim());
+    println!("store stdout: {}", store_output.stdout_str().trim());
+    if !store_output.stderr.is_empty() {
+        println!("store stderr: {}", store_output.stderr_str().trim());
     }
-    if headstash_output.exit_code != 0 {
-        return Err(format!("headstash failed (exit {}): {}",
-            headstash_output.exit_code,
-            headstash_output.stderr_str()).into());
+    if store_output.exit_code != 0 {
+        return Err(format!("store failed (exit {}): {}",
+            store_output.exit_code,
+            store_output.stderr_str()).into());
     }
+    let store_json: serde_json::Value = serde_json::from_str(
+        store_output.stdout_str().trim()
+    ).unwrap_or(serde_json::Value::Null);
+    let tx_code = store_json["code"].as_u64().unwrap_or(999);
+    if tx_code != 0 {
+        return Err(format!("store tx rejected (code {}): {}",
+            tx_code,
+            store_json["raw_log"].as_str().unwrap_or("unknown")).into());
+    }
+    println!("store tx accepted: {}", store_json["txhash"].as_str().unwrap_or("?"));
+    wait_for_blocks(chain, 2).await?;
 
-    // Check tx was accepted to mempool
+    println!("\n--- Uploading circuit (store-full-circuit) ---");
+    let k_flag = halo2_k.to_string();
+    let circuit_output = chain.chain_exec(&[
+        "tx", "wasm", "store-full-circuit",
+        CONTAINER_PARAMS, CONTAINER_VK_BODY,
+        "--k", &k_flag,
+        "--from", "default",
+        "--gas-prices", "0uterp",
+        "--chain-id", "120u-1",
+        "--keyring-backend", "test",
+        "--gas", "auto",
+        "--gas-adjustment", "1.5",
+        "--broadcast-mode", "sync",
+        "--output", "json",
+        "-y",
+    ]).await?;
+    println!("store-full-circuit stdout: {}", circuit_output.stdout_str().trim());
+    if !circuit_output.stderr.is_empty() {
+        println!("store-full-circuit stderr: {}", circuit_output.stderr_str().trim());
+    }
+    if circuit_output.exit_code != 0 {
+        return Err(format!("store-full-circuit failed (exit {}): {}",
+            circuit_output.exit_code,
+            circuit_output.stderr_str()).into());
+    }
     let hs_json: serde_json::Value = serde_json::from_str(
-        headstash_output.stdout_str().trim()
+        circuit_output.stdout_str().trim()
     ).unwrap_or(serde_json::Value::Null);
     let tx_code = hs_json["code"].as_u64().unwrap_or(999);
     if tx_code != 0 {
-        return Err(format!("headstash tx rejected (code {}): {}",
+        return Err(format!("store-full-circuit tx rejected (code {}): {}",
             tx_code,
             hs_json["raw_log"].as_str().unwrap_or("unknown")).into());
     }
-    println!("headstash tx accepted: {}", hs_json["txhash"].as_str().unwrap_or("?"));
+    println!("store-full-circuit tx accepted: {}", hs_json["txhash"].as_str().unwrap_or("?"));
 
     wait_for_blocks(chain, 2).await?;
 
@@ -193,6 +256,7 @@ async fn run_test(chain: &mut CosmosChain) -> Result<(), Box<dyn std::error::Err
         "tx", "wasm", "instantiate", code_id, "{}",
         "--label", "no-rick",
         "--no-admin",
+        "--amount", "10000000uterp",
         "--from", "default",
         "--gas-prices", "0uterp",
         "--chain-id", "120u-1",
