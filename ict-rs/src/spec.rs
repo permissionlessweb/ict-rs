@@ -143,8 +143,8 @@ pub fn builtin_chain_config(name: &str) -> Result<ChainConfig> {
             name: "terp".to_string(),
             chain_id: "terp-test-1".to_string(),
             images: vec![DockerImage {
-                repository: "ghcr.io/terpnetwork/terp-core".to_string(),
-                version: "latest".to_string(),
+                repository: "registry.terp.network/terp-core".to_string(),
+                version: "local-zk".to_string(),
                 uid_gid: None,
             }],
             bin: "terpd".to_string(),

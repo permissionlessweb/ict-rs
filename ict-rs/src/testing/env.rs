@@ -58,7 +58,7 @@ impl TestEnv {
     /// - `ICT_IMAGE_VERSION` (default: `local-zk`)
     pub fn terp_config() -> ChainConfig {
         let repo = std::env::var("ICT_IMAGE_REPO")
-            .unwrap_or_else(|_| "terpnetwork/terp-core".to_string());
+            .unwrap_or_else(|_| "registry.terp.network/terp-core".to_string());
         let version = std::env::var("ICT_IMAGE_VERSION")
             .unwrap_or_else(|_| "local-zk".to_string());
 

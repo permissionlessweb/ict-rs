@@ -40,7 +40,7 @@ use ict_rs::prelude::*;
 // ---------------------------------------------------------------------------
 
 /// Docker image for the zk-wasmvm enabled chain.
-const ZK_IMAGE_REPO: &str = "terpnetwork/terp-core";
+const ZK_IMAGE_REPO: &str = "registry.terp.network/terp-core";
 const ZK_IMAGE_VERSION: &str = "local-zk";
 
 /// Chain configuration constants.
