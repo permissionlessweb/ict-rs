@@ -34,6 +34,8 @@ nostr = ["dep:tokio-tungstenite", "dep:futures-util"]
 # Local Zakura (Zcash regtest) node spawn for private-bridge Option D / D6.
 # Requires Docker runtime (bollard). Binary path: ZAKURAD_BIN or ZakuraNodeConfig.
 zakura = ["docker"]
+dregg-node = ["docker"]
+bitcoin = ["docker"]
 
 [dependencies]
 async-trait = "0.1"
