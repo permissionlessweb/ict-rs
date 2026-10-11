@@ -1980,8 +1980,8 @@ dependencies = [
  "reddsa",
  "sha2 0.10.9",
  "thiserror 1.0.69",
- "zakura-halo2-poseidon",
- "zakura-pasta-curves",
+ "zakura-halo2-poseidon 1.3.0-alpha.1 (git+https://github.com/permissionlessweb/common?rev=5364d3d989640e5356351ee8c0d062ca18d4bfaa)",
+ "zakura-pasta-curves 1.3.0-alpha.1 (git+https://github.com/permissionlessweb/common?rev=5364d3d989640e5356351ee8c0d062ca18d4bfaa)",
 ]
 
 [[package]]
@@ -2326,16 +2326,6 @@ dependencies = [
 ]
 
 [[package]]
-name = "cw-denom"
-version = "2.8.0-alpha.2"
-dependencies = [
- "cosmwasm-schema",
- "cosmwasm-std",
- "cw20",
- "thiserror 1.0.69",
-]
-
-[[package]]
 name = "cw-headstash"
 version = "0.1.0"
 dependencies = [
@@ -2360,19 +2350,9 @@ dependencies = [
  "serde_json",
  "sha2 0.10.9",
  "terp-auth",
- "zakura-halo2-proofs",
- "zakura-pasta-curves",
+ "zakura-halo2-proofs 1.3.0-alpha.1",
+ "zakura-pasta-curves 1.3.0-alpha.1",
  "zk-headstash",
-]
-
-[[package]]
-name = "cw-hooks"
-version = "2.8.0-alpha.2"
-dependencies = [
- "cosmwasm-schema",
- "cosmwasm-std",
- "cw-storage-plus",
- "thiserror 1.0.69",
 ]
 
 [[package]]
@@ -2493,23 +2473,6 @@ dependencies = [
 ]
 
 [[package]]
-name = "cw-orch-ibc"
-version = "0.1.0"
-dependencies = [
- "anyhow",
- "clap",
- "cosmwasm-std",
- "cw-utils",
- "cw4",
- "dao-interface",
- "dao-proposal-single",
- "dao-voting",
- "dao-voting-cw4",
- "serde",
- "serde_json",
-]
-
-[[package]]
 name = "cw-orch-mock"
 version = "0.24.4"
 dependencies = [
@@ -2559,14 +2522,6 @@ dependencies = [
  "proc-macro2",
  "quote",
  "syn 1.0.109",
-]
-
-[[package]]
-name = "cw-reply-helper"
-version = "2.8.0-alpha.2"
-dependencies = [
- "cosmwasm-std",
- "cw-utils",
 ]
 
 [[package]]
@@ -2652,155 +2607,6 @@ dependencies = [
  "schemars 0.8.22",
  "semver 1.0.28",
  "serde",
- "thiserror 1.0.69",
-]
-
-[[package]]
-name = "cw4"
-version = "3.0.0"
-dependencies = [
- "cosmwasm-schema",
- "cosmwasm-std",
- "cw-storage-plus",
- "schemars 0.8.22",
- "serde",
-]
-
-[[package]]
-name = "cw4-group"
-version = "3.0.0"
-dependencies = [
- "cosmwasm-schema",
- "cosmwasm-std",
- "cw-controllers",
- "cw-storage-plus",
- "cw-utils",
- "cw2",
- "cw4",
- "schemars 0.8.22",
- "serde",
- "thiserror 1.0.69",
-]
-
-[[package]]
-name = "cw721"
-version = "0.22.0"
-dependencies = [
- "cosmwasm-schema",
- "cosmwasm-std",
- "cw-ownable",
- "cw-storage-plus",
- "cw-utils",
- "cw2",
- "schemars 0.8.22",
- "serde",
- "thiserror 1.0.69",
- "url",
-]
-
-[[package]]
-name = "dao-dao-macros"
-version = "2.8.0-alpha.2"
-dependencies = [
- "cosmwasm-schema",
- "proc-macro2",
- "quote",
- "syn 1.0.109",
-]
-
-[[package]]
-name = "dao-hooks"
-version = "2.8.0-alpha.2"
-dependencies = [
- "cosmwasm-schema",
- "cosmwasm-std",
- "cw-hooks",
- "cw4",
- "dao-pre-propose-base",
- "dao-voting",
-]
-
-[[package]]
-name = "dao-interface"
-version = "2.8.0-alpha.2"
-dependencies = [
- "cosmwasm-schema",
- "cosmwasm-std",
- "cw-storage-plus",
- "cw-utils",
- "cw2",
- "cw20",
- "cw721",
-]
-
-[[package]]
-name = "dao-pre-propose-base"
-version = "2.8.0-alpha.2"
-dependencies = [
- "cosmwasm-schema",
- "cosmwasm-std",
- "cw-denom",
- "cw-hooks",
- "cw-storage-plus",
- "cw-utils",
- "cw2",
- "dao-interface",
- "dao-voting",
- "semver 1.0.28",
- "serde",
- "thiserror 1.0.69",
-]
-
-[[package]]
-name = "dao-proposal-single"
-version = "2.8.0-alpha.2"
-dependencies = [
- "cosmwasm-schema",
- "cosmwasm-std",
- "cw-hooks",
- "cw-reply-helper",
- "cw-storage-plus",
- "cw-utils",
- "cw2",
- "cw20",
- "dao-dao-macros",
- "dao-hooks",
- "dao-interface",
- "dao-pre-propose-base",
- "dao-voting",
- "serde",
- "thiserror 1.0.69",
-]
-
-[[package]]
-name = "dao-voting"
-version = "2.8.0-alpha.2"
-dependencies = [
- "cosmwasm-schema",
- "cosmwasm-std",
- "cw-denom",
- "cw-storage-plus",
- "cw-utils",
- "cw20",
- "dao-dao-macros",
- "dao-interface",
- "thiserror 1.0.69",
-]
-
-[[package]]
-name = "dao-voting-cw4"
-version = "2.8.0-alpha.2"
-dependencies = [
- "cosmwasm-schema",
- "cosmwasm-std",
- "cw-reply-helper",
- "cw-storage-plus",
- "cw-utils",
- "cw2",
- "cw4",
- "cw4-group",
- "dao-dao-macros",
- "dao-interface",
  "thiserror 1.0.69",
 ]
 
@@ -4504,7 +4310,6 @@ dependencies = [
  "criterion",
  "cw-headstash",
  "cw-orch-core",
- "cw-orch-ibc",
  "ed25519-dalek 2.2.0",
  "futures",
  "futures-util",
@@ -4515,6 +4320,7 @@ dependencies = [
  "log",
  "prost",
  "rand 0.8.7",
+ "rayon",
  "ripemd",
  "serde",
  "serde_json",
@@ -4570,7 +4376,7 @@ dependencies = [
  "tokio",
  "tracing",
  "tracing-subscriber 0.3.23",
- "zakura-halo2-proofs",
+ "zakura-halo2-proofs 1.3.0-alpha.1",
 ]
 
 [[package]]
@@ -8793,8 +8599,8 @@ dependencies = [
  "serde_json",
  "sha2 0.10.9",
  "sha3 0.10.9",
- "zakura-halo2-proofs",
- "zakura-pasta-curves",
+ "zakura-halo2-proofs 1.3.0-alpha.1",
+ "zakura-pasta-curves 1.3.0-alpha.1",
 ]
 
 [[package]]
@@ -10473,10 +10279,25 @@ dependencies = [
  "ff 0.14.0",
  "group 0.14.0",
  "subtle",
- "zakura-halo2-poseidon",
- "zakura-halo2-proofs",
- "zakura-pasta-curves",
- "zakura-sinsemilla",
+ "zakura-halo2-poseidon 1.3.0-alpha.1",
+ "zakura-halo2-proofs 1.3.0-alpha.1",
+ "zakura-pasta-curves 1.3.0-alpha.1",
+ "zakura-sinsemilla 1.3.0-alpha.1",
+]
+
+[[package]]
+name = "zakura-halo2-gadgets"
+version = "1.3.0-alpha.1"
+source = "git+https://github.com/permissionlessweb/common?rev=5364d3d989640e5356351ee8c0d062ca18d4bfaa#5364d3d989640e5356351ee8c0d062ca18d4bfaa"
+dependencies = [
+ "arrayvec",
+ "ff 0.14.0",
+ "group 0.14.0",
+ "subtle",
+ "zakura-halo2-poseidon 1.3.0-alpha.1 (git+https://github.com/permissionlessweb/common?rev=5364d3d989640e5356351ee8c0d062ca18d4bfaa)",
+ "zakura-halo2-proofs 1.3.0-alpha.1 (git+https://github.com/permissionlessweb/common?rev=5364d3d989640e5356351ee8c0d062ca18d4bfaa)",
+ "zakura-pasta-curves 1.3.0-alpha.1 (git+https://github.com/permissionlessweb/common?rev=5364d3d989640e5356351ee8c0d062ca18d4bfaa)",
+ "zakura-sinsemilla 1.3.0-alpha.1 (git+https://github.com/permissionlessweb/common?rev=5364d3d989640e5356351ee8c0d062ca18d4bfaa)",
 ]
 
 [[package]]
@@ -10490,7 +10311,18 @@ dependencies = [
  "bitvec",
  "ff 0.14.0",
  "group 0.14.0",
- "zakura-pasta-curves",
+ "zakura-pasta-curves 1.3.0-alpha.1",
+]
+
+[[package]]
+name = "zakura-halo2-poseidon"
+version = "1.3.0-alpha.1"
+source = "git+https://github.com/permissionlessweb/common?rev=5364d3d989640e5356351ee8c0d062ca18d4bfaa#5364d3d989640e5356351ee8c0d062ca18d4bfaa"
+dependencies = [
+ "bitvec",
+ "ff 0.14.0",
+ "group 0.14.0",
+ "zakura-pasta-curves 1.3.0-alpha.1 (git+https://github.com/permissionlessweb/common?rev=5364d3d989640e5356351ee8c0d062ca18d4bfaa)",
 ]
 
 [[package]]
@@ -10506,7 +10338,23 @@ dependencies = [
  "rand_core 0.10.1",
  "tracing",
  "zakura-halo2-legacy-pdqsort",
- "zakura-pasta-curves",
+ "zakura-pasta-curves 1.3.0-alpha.1",
+]
+
+[[package]]
+name = "zakura-halo2-proofs"
+version = "1.3.0-alpha.1"
+source = "git+https://github.com/permissionlessweb/common?rev=5364d3d989640e5356351ee8c0d062ca18d4bfaa#5364d3d989640e5356351ee8c0d062ca18d4bfaa"
+dependencies = [
+ "blake2b_simd",
+ "corez",
+ "ff 0.14.0",
+ "group 0.14.0",
+ "maybe-rayon",
+ "rand 0.10.2",
+ "rand_core 0.10.1",
+ "tracing",
+ "zakura-pasta-curves 1.3.0-alpha.1 (git+https://github.com/permissionlessweb/common?rev=5364d3d989640e5356351ee8c0d062ca18d4bfaa)",
 ]
 
 [[package]]
@@ -10537,6 +10385,21 @@ dependencies = [
 ]
 
 [[package]]
+name = "zakura-pasta-curves"
+version = "1.3.0-alpha.1"
+source = "git+https://github.com/permissionlessweb/common?rev=5364d3d989640e5356351ee8c0d062ca18d4bfaa#5364d3d989640e5356351ee8c0d062ca18d4bfaa"
+dependencies = [
+ "blake2b_simd",
+ "cc",
+ "ff 0.14.0",
+ "group 0.14.0",
+ "once_cell",
+ "rand 0.10.2",
+ "static_assertions",
+ "subtle",
+]
+
+[[package]]
 name = "zakura-reddsa"
 version = "1.3.0-alpha.1"
 dependencies = [
@@ -10548,7 +10411,7 @@ dependencies = [
  "serde",
  "thiserror 2.0.20",
  "zakura-jubjub",
- "zakura-pasta-curves",
+ "zakura-pasta-curves 1.3.0-alpha.1",
  "zeroize",
 ]
 
@@ -10559,7 +10422,18 @@ dependencies = [
  "group 0.14.0",
  "once_cell",
  "subtle",
- "zakura-pasta-curves",
+ "zakura-pasta-curves 1.3.0-alpha.1",
+]
+
+[[package]]
+name = "zakura-sinsemilla"
+version = "1.3.0-alpha.1"
+source = "git+https://github.com/permissionlessweb/common?rev=5364d3d989640e5356351ee8c0d062ca18d4bfaa#5364d3d989640e5356351ee8c0d062ca18d4bfaa"
+dependencies = [
+ "group 0.14.0",
+ "once_cell",
+ "subtle",
+ "zakura-pasta-curves 1.3.0-alpha.1 (git+https://github.com/permissionlessweb/common?rev=5364d3d989640e5356351ee8c0d062ca18d4bfaa)",
 ]
 
 [[package]]
@@ -10748,9 +10622,9 @@ dependencies = [
  "wasmer",
  "wasmer-middlewares",
  "wasmer-types",
- "zakura-halo2-gadgets",
- "zakura-halo2-proofs",
- "zakura-pasta-curves",
+ "zakura-halo2-gadgets 1.3.0-alpha.1 (git+https://github.com/permissionlessweb/common?rev=5364d3d989640e5356351ee8c0d062ca18d4bfaa)",
+ "zakura-halo2-proofs 1.3.0-alpha.1 (git+https://github.com/permissionlessweb/common?rev=5364d3d989640e5356351ee8c0d062ca18d4bfaa)",
+ "zakura-pasta-curves 1.3.0-alpha.1 (git+https://github.com/permissionlessweb/common?rev=5364d3d989640e5356351ee8c0d062ca18d4bfaa)",
 ]
 
 [[package]]
@@ -10784,11 +10658,11 @@ dependencies = [
  "subtle",
  "tracing",
  "visibility",
- "zakura-halo2-gadgets",
- "zakura-halo2-proofs",
- "zakura-pasta-curves",
+ "zakura-halo2-gadgets 1.3.0-alpha.1",
+ "zakura-halo2-proofs 1.3.0-alpha.1",
+ "zakura-pasta-curves 1.3.0-alpha.1",
  "zakura-reddsa",
- "zakura-sinsemilla",
+ "zakura-sinsemilla 1.3.0-alpha.1",
  "zcash_note_encryption",
  "zcash_spec",
  "zip32",
