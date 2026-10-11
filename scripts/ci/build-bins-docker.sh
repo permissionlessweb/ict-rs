@@ -24,8 +24,12 @@ esac
 
 echo "build-bins-docker: image=$IMAGE platform=$PLATFORM crates=$CRATES target=$TDIR"
 
+# ict-rs-cw-orch's optional dregg path walks out of crates/ to
+# abstract/svg-mint. Inside this mount that walk lands on /svg-mint.
+SVG_MINT="$(cd "$CRATES/../.." && pwd)/svg-mint"
 docker run --rm --platform "$PLATFORM" \
   -v "$CRATES:/crates" \
+  -v "$SVG_MINT:/svg-mint:ro" \
   -v ict-rs-cargo-registry:/usr/local/cargo/registry \
   -v ict-rs-cargo-git:/usr/local/cargo/git \
   -w /crates/ict-rs \
