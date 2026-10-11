@@ -1,6 +1,6 @@
 #!/usr/bin/env bash
 # Build ict-ci + CI suites inside Docker so the tarball is not host-arch.
-# Default: linux/amd64 (GitHub ubuntu-latest) using rust:1.89-bookworm.
+# Default: linux/amd64 (GitHub ubuntu-latest). Wasmer 7.4.2 needs rustc 1.95.
 #
 # Usage:
 #   scripts/ci/build-bins-docker.sh [outdir]
@@ -10,7 +10,7 @@ ROOT="$(cd "$(dirname "$0")/../.." && pwd)"
 CRATES="$(cd "$ROOT/.." && pwd)"
 OUTDIR="${1:-$ROOT/dist}"
 PLATFORM="${ICT_RS_BUILD_PLATFORM:-linux/amd64}"
-IMAGE="${ICT_RS_BUILD_IMAGE:-rust:1.89-bookworm}"
+IMAGE="${ICT_RS_BUILD_IMAGE:-rust:1.95-bookworm}"
 ICT_RS_ROOT="$ROOT"
 # shellcheck source=suites.sh
 . "$ROOT/scripts/ci/suites.sh"
