@@ -81,7 +81,7 @@ pub struct PortBinding {
 }
 
 /// A volume mount into a container.
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct VolumeMount {
     pub source: String,
     pub target: String,

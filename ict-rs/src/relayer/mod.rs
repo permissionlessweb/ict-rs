@@ -14,7 +14,10 @@ use crate::tx::ExecOutput;
 use crate::wallet::Wallet;
 
 pub use docker_relayer::DockerRelayer;
-pub use hermes::HermesRelayer;
+pub use hermes::{
+    hermes_create_client_cmd, hermes_create_wasm_client_cmd, hermes_require_ok,
+    hermes_update_client_cmd, HermesRelayer,
+};
 pub use rly::CosmosRlyCommander;
 
 /// Supported relayer implementations.
@@ -82,6 +85,17 @@ pub trait Relayer: Send + Sync {
 
     /// Update IBC clients on a path.
     async fn update_clients(&self, path_name: &str) -> Result<()>;
+
+    /// Update a named 08-wasm (or 07-tendermint) client on a host chain.
+    ///
+    /// Hermes uses the same `update client` CLI for wasm clients (`08-wasm-*`).
+    /// Default returns Config until a relayer implements it.
+    async fn update_wasm_client(&self, host_chain: &str, client_id: &str) -> Result<()> {
+        let _ = (host_chain, client_id);
+        Err(crate::error::IctError::Config(
+            "update_wasm_client not implemented for this relayer".into(),
+        ))
+    }
 
     // -- Lifecycle --
 

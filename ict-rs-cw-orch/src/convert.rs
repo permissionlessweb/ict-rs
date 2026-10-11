@@ -12,15 +12,22 @@ use crate::error::BridgeError;
 /// host-mapped gRPC URL from the ict-rs chain state.
 pub fn chain_info_from_cosmos(chain: &CosmosChain) -> Result<ChainInfoOwned, BridgeError> {
     let cfg = chain.config();
-    let grpc_url = chain.host_grpc_address();
+    // Explicit pin (lab / CI): ICT_GRPC_URL=http://127.0.0.1:<host-mapped>
+    let grpc_url = std::env::var("ICT_GRPC_URL")
+        .ok()
+        .filter(|s| !s.trim().is_empty())
+        .unwrap_or_else(|| {
+            chain
+                .primary_node()
+                .ok()
+                .and_then(|n| n.host_grpc_port)
+                .map(|p| format!("http://127.0.0.1:{p}"))
+                .unwrap_or_else(|| chain.host_grpc_address())
+        });
 
-    // Verify we have a real host port, not just the fallback.
-    if grpc_url == "http://localhost:9090" {
-        // Could be the real port on a non-auto-assigned setup, but warn.
-        tracing::warn!(
-            "gRPC address is the default fallback — host ports may not be resolved. \
-             Ensure the chain is started before calling this function."
-        );
+    let mapped = chain.primary_node().ok().and_then(|n| n.host_grpc_port);
+    if grpc_url == "http://localhost:9090" && mapped != Some(9090) {
+        return Err(BridgeError::NoGrpcAddress);
     }
 
     // Parse gas price from the gas_prices string (e.g. "0.025uterp" → 0.025).

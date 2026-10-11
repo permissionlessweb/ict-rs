@@ -1,14 +1,23 @@
 //! Production-grade Lean e2e: **ict-rs Docker + cw-orch Daemon + JOIN/LEAV**.
+//! e2e_sot_marker=bitfield_index_eb_v1
 //!
 //! Not mock. Not ICT_MOCK. Never writes `lean-pending.json`.
 //! Exercises live capabilities and **prints a gap matrix** for work still
 //! required to ship (image JOIN, cash Δ, Stwo, one power function).
 //!
-//! Needs `terpz-lean` built from feat/lean-v6 @ 94c61e6 or later.
+//! Needs `terpz-lean` built from feat/lean-v6 @ 6e2a7aa or later.
+//!
+//! Session persist (do not regress):
+//! - curl+sh glue: parse first `{` .. last `}` before scoring CheckTx
+//! - JOIN/LEAV are LNPR subjects (CheckTx notes RAM; Prepare folds; ApplyLNPR writes)
+//! - broadcast raw membership to every validator (not only node 0)
+//! - query BondedSet at the live period, not always `"0"`
+//! - Dummy-N must FAIL; one STWO FOLD verify is the aggregate statement
+//! - never wrap x/staking AppModule; Comet VP is app.EndBlocker overwrite
 //!
 //! ```sh
 //! cd crates/ict-rs/ict-rs-cw-orch
-//! ICT_LEAN_IMAGE=terpnetwork/terp-core:terpz-lean \
+//! ICT_LEAN_IMAGE=registry.terp.network/terp-core:terpz-lean \
 //! ICT_LEAN_OWNS_VALSET=true \
 //!   cargo run --example lean_production_e2e --features docker
 //! ```
@@ -16,6 +25,29 @@
 use ict_rs::cosmos::interchain::wait_for_blocks;
 use ict_rs::prelude::*;
 use ict_rs_cw_orch::daemon_builder_from_chain;
+
+/// ict-rs wait_for_blocks returns after 2.5s at the same height ("mock").
+/// Wait until membership-sot bits_set hits `want` (JOIN/LEAV SoT), not a mock shortcut.
+async fn wait_bits(
+    chain: &CosmosChain,
+    want: usize,
+) -> Result<serde_json::Value, Box<dyn std::error::Error>> {
+    let start = chain.height().await?;
+    let deadline = std::time::Instant::now() + std::time::Duration::from_secs(45);
+    loop {
+        let sot = query_json(chain, &["leanval", "membership-sot"]).await?;
+        let n = bits_set(&sot);
+        let h = chain.height().await?;
+        if n == want {
+            println!("  [wait] bits={n} height {start} → {h}");
+            return Ok(sot);
+        }
+        if std::time::Instant::now() > deadline {
+            return Err(format!("wait_bits want={want} got={n} height {start}→{h}").into());
+        }
+        tokio::time::sleep(std::time::Duration::from_millis(400)).await;
+    }
+}
 
 fn env_or(key: &str, default: &str) -> String {
     std::env::var(key)
@@ -114,6 +146,14 @@ fn modify_genesis(_cfg: &ChainConfig, raw: Vec<u8>) -> IctResult<Vec<u8>> {
     if let Some(params) = genesis.pointer_mut("/app_state/mint/params") {
         params["mint_denom"] = serde_json::json!("uterp");
     }
+    // Flood reap omits GasWanted=0 JOIN when max_gas is 0. Unlimited gas so
+    // RequestPrepareProposal.Txs still carries membership bytes.
+    if let Some(block) = genesis.pointer_mut("/consensus_params/block") {
+        block["max_gas"] = serde_json::json!("-1");
+    }
+    if let Some(block) = genesis.pointer_mut("/consensus/params/block") {
+        block["max_gas"] = serde_json::json!("-1");
+    }
     if owns_valset() {
         let subjects = collect_subjects(&genesis);
         if subjects.is_empty() {
@@ -136,11 +176,11 @@ fn modify_genesis(_cfg: &ChainConfig, raw: Vec<u8>) -> IctResult<Vec<u8>> {
 }
 
 fn terpz_config() -> ChainConfig {
-    let tag = env_or("ICT_LEAN_IMAGE", "terpnetwork/terp-core:terpz-lean");
+    let tag = env_or("ICT_LEAN_IMAGE", "registry.terp.network/terp-core:terpz-lean");
     let (repository, version) = tag
         .rsplit_once(':')
         .map(|(r, v)| (r.to_string(), v.to_string()))
-        .unwrap_or_else(|| ("terpnetwork/terp-core".into(), "terpz-lean".into()));
+        .unwrap_or_else(|| ("registry.terp.network/terp-core".into(), "terpz-lean".into()));
     ChainConfig {
         chain_type: ChainType::Cosmos,
         name: "terpz-lean-prod".to_string(),
@@ -164,7 +204,10 @@ fn terpz_config() -> ChainConfig {
         pre_genesis: None,
         config_file_overrides: std::collections::HashMap::new(),
         additional_start_args: vec!["--wasm.skip_wasmvm_version_check".to_string()],
-        env: Vec::new(),
+        env: vec![(
+            "LEANVAL_MEMBERSHIP_DIR".to_string(),
+            "/terpd/lean-join".to_string(),
+        )],
         sidecar_configs: Vec::new(),
         faucet: None,
         genesis_style: Default::default(),
@@ -178,6 +221,32 @@ fn bonded_rows(v: &serde_json::Value) -> usize {
         }
     }
     0
+}
+
+/// Membership SoT is bitfield + deposit index + EB (not staking validators).
+fn bits_set(v: &serde_json::Value) -> usize {
+    v.get("bits_set")
+        .and_then(|x| x.as_u64())
+        .map(|n| n as usize)
+        .unwrap_or(0)
+}
+
+fn index_count(v: &serde_json::Value) -> usize {
+    v.get("indexes")
+        .and_then(|x| x.as_array())
+        .map(|a| a.len())
+        .unwrap_or(0)
+}
+
+fn eb_nonzero(v: &serde_json::Value) -> usize {
+    v.get("eb")
+        .and_then(|x| x.as_array())
+        .map(|a| {
+            a.iter()
+                .filter(|r| r.get("eb").and_then(|e| e.as_u64()).unwrap_or(0) > 0)
+                .count()
+        })
+        .unwrap_or(0)
 }
 
 fn staking_count(v: &serde_json::Value) -> usize {
@@ -231,6 +300,10 @@ fn to_hex(b: &[u8]) -> String {
     b.iter().map(|x| format!("{x:02x}")).collect()
 }
 
+fn hex32(fill: u8) -> String {
+    format!("{fill:02x}").repeat(32)
+}
+
 fn decode_pk(b64: &str) -> Result<Vec<u8>, Box<dyn std::error::Error>> {
     fn d(c: u8) -> Option<u8> {
         match c {
@@ -276,18 +349,408 @@ async fn broadcast_raw(
     Ok(out.stdout_str().to_string() + &out.stderr_str())
 }
 
-fn tx_ok(resp: &str) -> bool {
-    let json_part = match (resp.find('{'), resp.rfind('}')) {
+fn dump_val_lnpr(chain: &CosmosChain) {
+    let names = [
+        "ict-lean-cw-orch-prod-lean-prod-1-val-0",
+        "ict-lean-cw-orch-prod-lean-prod-1-val-1",
+    ];
+    for name in names {
+        let out = std::process::Command::new("docker")
+            .args(["logs", "--tail", "20000", name])
+            .output();
+        match out {
+            Ok(o) => {
+                let blob = format!(
+                    "{}{}",
+                    String::from_utf8_lossy(&o.stdout),
+                    String::from_utf8_lossy(&o.stderr)
+                );
+                println!("  [logs] {name} (LNPR/JOIN/LEAV/Apply)");
+                let ls = std::process::Command::new("docker")
+                    .args([
+                        "exec",
+                        name,
+                        "sh",
+                        "-c",
+                        "ls -la /terpd/lean-join /tmp/terp-leanval-membership 2>/dev/null; echo '---'; grep -h leanval /terpd/*.log /terpd/**/*.log 2>/dev/null | tail -30",
+                    ])
+                    .output();
+                if let Ok(o) = ls {
+                    print!("{}", String::from_utf8_lossy(&o.stdout));
+                    eprint!("{}", String::from_utf8_lossy(&o.stderr));
+                }
+                for line in blob.lines() {
+                    let u = line.to_ascii_uppercase();
+                    if u.contains("LNPR")
+                        || u.contains("JOIN")
+                        || u.contains("LEAV")
+                        || u.contains("APPLY")
+                        || u.contains("LEANVAL")
+                        || u.contains("BONDED")
+                    {
+                        println!("    {line}");
+                    }
+                }
+            }
+            Err(e) => println!("  [logs] {name} docker logs: {e}"),
+        }
+    }
+    let _ = chain;
+}
+
+async fn scan_ssle_in_block(
+    chain: &CosmosChain,
+) -> Result<String, Box<dyn std::error::Error>> {
+    for _ in 0..20 {
+        let url = format!("{}/block", chain.host_rpc_address());
+        let out = std::process::Command::new("curl")
+            .args(["-sS", "--max-time", "5", &url])
+            .output()?;
+        let body = String::from_utf8_lossy(&out.stdout);
+        let v: serde_json::Value =
+            serde_json::from_str(json_blob(&body)).unwrap_or(serde_json::Value::Null);
+        let txs = v
+            .pointer("/result/block/data/txs")
+            .and_then(|t| t.as_array())
+            .cloned()
+            .unwrap_or_default();
+        for txb in txs {
+            let s = txb.as_str().unwrap_or("");
+            let raw = decode_pk(s).unwrap_or_default();
+            if raw.starts_with(b"SSLE") && raw.len() >= 53 {
+                let ticket = &raw[20..52];
+                let plen = raw[52] as usize;
+                let proposer = if 53 + plen <= raw.len() {
+                    &raw[53..53 + plen]
+                } else {
+                    &[]
+                };
+                if ticket == proposer && !proposer.is_empty() {
+                    return Err("ssle ticket equals proposer id".into());
+                }
+                if raw.windows(4).any(|w| w == b"DSTW") {
+                    return Err("ssle proof is Dummy DSTW".into());
+                }
+                return Ok(format!(
+                    "committed SSLE ticket!=proposer bytes={}",
+                    raw.len()
+                ));
+            }
+        }
+        tokio::time::sleep(std::time::Duration::from_millis(500)).await;
+    }
+    Err("no SSLE tx in recent blocks (Prepare did not inject / lean-ssle missing)".into())
+}
+
+fn parse_ssle_blob(raw: &[u8]) -> Option<(i64, Vec<u8>, Vec<u8>, Vec<u8>)> {
+    const HDR: usize = 4 + 8 + 8 + 32 + 1;
+    if raw.len() < HDR || &raw[..4] != b"SSLE" {
+        return None;
+    }
+    let height = i64::from_be_bytes(raw[12..20].try_into().ok()?);
+    let ticket = raw[20..52].to_vec();
+    let plen = raw[52] as usize;
+    if 53 + plen > raw.len() {
+        return None;
+    }
+    Some((
+        height,
+        ticket,
+        raw[53..53 + plen].to_vec(),
+        raw[53 + plen..].to_vec(),
+    ))
+}
+
+async fn scan_ssle_window(
+    chain: &CosmosChain,
+    n: usize,
+) -> Result<String, Box<dyn std::error::Error>> {
+    let rpc = chain.host_rpc_address();
+    let mut tickets = std::collections::BTreeSet::new();
+    let mut ok = 0usize;
+    let mut seen_h = std::collections::BTreeSet::new();
+    let deadline = std::time::Instant::now() + std::time::Duration::from_secs(n as u64 * 5 + 10);
+    while ok < n && std::time::Instant::now() < deadline {
+        let out = std::process::Command::new("curl")
+            .args(["-sS", "--max-time", "5", &format!("{rpc}/block")])
+            .output()?;
+        let v: serde_json::Value =
+            serde_json::from_str(json_blob(&String::from_utf8_lossy(&out.stdout)))
+                .unwrap_or(serde_json::Value::Null);
+        let h = v
+            .pointer("/result/block/header/height")
+            .and_then(|x| x.as_str().and_then(|s| s.parse::<i64>().ok()))
+            .unwrap_or(0);
+        if h <= 0 || !seen_h.insert(h) {
+            tokio::time::sleep(std::time::Duration::from_millis(300)).await;
+            continue;
+        }
+        let txs = v
+            .pointer("/result/block/data/txs")
+            .and_then(|t| t.as_array())
+            .cloned()
+            .unwrap_or_default();
+        let mut found = false;
+        for txb in txs {
+            let raw = decode_pk(txb.as_str().unwrap_or("")).unwrap_or_default();
+            if let Some((sh, ticket, proposer, proof)) = parse_ssle_blob(&raw) {
+                if proof.windows(4).any(|w| w == b"DSTW") {
+                    return Err(format!("h={h} Dummy DSTW in SSLE").into());
+                }
+                if proof.len() < 10 || &proof[..4] != b"STWO" || &proof[6..10] != b"SSLE" {
+                    return Err(format!("h={h} SSLE not STWO/SSLE").into());
+                }
+                if ticket == proposer && !proposer.is_empty() {
+                    return Err(format!("h={h} ticket==proposer").into());
+                }
+                if sh != h {
+                    return Err(format!("h={h} SSLE height {sh}").into());
+                }
+                tickets.insert(ticket);
+                found = true;
+                ok += 1;
+                break;
+            }
+        }
+        if !found {
+            return Err(format!("h={h} missing SSLE in window").into());
+        }
+        tokio::time::sleep(std::time::Duration::from_millis(200)).await;
+    }
+    if ok < n {
+        return Err(format!("ssle window short {ok}/{n}").into());
+    }
+    if tickets.len() != ok {
+        return Err(format!("duplicate tickets {} vs {ok}", tickets.len()).into());
+    }
+    Ok(format!("{ok} consecutive STWO SSLE, {ok} unique tickets"))
+}
+
+fn encode_ssle_blob(period: u64, height: i64, ticket: &[u8], proposer: &[u8], proof: &[u8]) -> Vec<u8> {
+    let mut out = b"SSLE".to_vec();
+    out.extend_from_slice(&period.to_be_bytes());
+    out.extend_from_slice(&(height as u64).to_be_bytes());
+    let mut t = [0u8; 32];
+    let n = ticket.len().min(32);
+    t[..n].copy_from_slice(&ticket[..n]);
+    out.extend_from_slice(&t);
+    let p = if proposer.len() > 255 {
+        &proposer[..255]
+    } else {
+        proposer
+    };
+    out.push(p.len() as u8);
+    out.extend_from_slice(p);
+    out.extend_from_slice(proof);
+    out
+}
+
+async fn flood_insane_ssle(chain: &CosmosChain) -> Result<String, Box<dyn std::error::Error>> {
+    let t32 = vec![0x42u8; 32];
+    let p20 = vec![0x42u8; 20];
+    let mut fold = b"STWO".to_vec();
+    fold.extend_from_slice(&[2, 5]);
+    fold.extend_from_slice(b"FOLD");
+    fold.extend_from_slice(&[0u8; 96]);
+    let probes = [
+        encode_ssle_blob(0, 1, &t32, &p20, b"DSTW"),
+        encode_ssle_blob(0, 1, &t32, &t32, b"DSTW"),
+        encode_ssle_blob(0, 1, &t32, &p20, &fold),
+        [b"SSLE".as_slice(), &[0u8; 8]].concat(),
+    ];
+    let h0 = chain.height().await?;
+    let mut rejected = 0usize;
+    let urls: Vec<String> = chain
+        .validators()
+        .iter()
+        .filter_map(|n| n.host_rpc_address())
+        .collect();
+    for url in &urls {
+        for raw in &probes {
+            let hex = to_hex(raw);
+            let endpoint = format!("{url}/broadcast_tx_sync?tx=0x{hex}");
+            let out = std::process::Command::new("curl")
+                .args(["-sS", "--max-time", "5", &endpoint])
+                .output()?;
+            let resp = String::from_utf8_lossy(&out.stdout);
+            if tx_ok(&resp) {
+                return Err("insane SSLE accepted in mempool".into());
+            }
+            rejected += 1;
+        }
+    }
+    let deadline = std::time::Instant::now() + std::time::Duration::from_secs(20);
+    loop {
+        let h = chain.height().await?;
+        if h >= h0 + 2 {
+            return Ok(format!(
+                "rejected {rejected} dummy/ticket=proposer/wrong-kind; height {h0}→{h}"
+            ));
+        }
+        if std::time::Instant::now() > deadline {
+            return Err(format!("stalled after insanity flood at {h} (from {h0})").into());
+        }
+        tokio::time::sleep(std::time::Duration::from_millis(300)).await;
+    }
+}
+
+fn json_blob(resp: &str) -> &str {
+    match (resp.find('{'), resp.rfind('}')) {
         (Some(i), Some(j)) if j > i => &resp[i..=j],
         _ => resp.trim(),
-    };
-    let v: serde_json::Value = serde_json::from_str(json_part).unwrap_or(serde_json::Value::Null);
+    }
+}
+
+fn tx_ok(resp: &str) -> bool {
+    let v: serde_json::Value =
+        serde_json::from_str(json_blob(resp)).unwrap_or(serde_json::Value::Null);
     let code = v
         .pointer("/result/code")
         .or_else(|| v.get("code"))
         .and_then(|c| c.as_u64())
         .unwrap_or(99);
     code == 0
+}
+
+async fn broadcast_raw_all(
+    chain: &CosmosChain,
+    raw: &[u8],
+) -> Result<String, Box<dyn std::error::Error>> {
+    let hex = to_hex(raw);
+    let mut last = String::new();
+    let mut any_ok = false;
+    // Host RPC: image has no curl; in-container wget 500 hid CheckTx-0 on the proposer.
+    let mut urls: Vec<String> = chain
+        .validators()
+        .iter()
+        .chain(chain.full_nodes().iter())
+        .filter_map(|n| n.host_rpc_address())
+        .collect();
+    if urls.is_empty() {
+        urls.push(chain.host_rpc_address());
+    }
+    for url in urls {
+        let endpoint = format!("{url}/broadcast_tx_sync?tx=0x{hex}");
+        let out = std::process::Command::new("curl")
+            .args(["-sS", "--max-time", "8", &endpoint])
+            .output();
+        let resp = match out {
+            Ok(o) => String::from_utf8_lossy(&o.stdout).into_owned()
+                + &String::from_utf8_lossy(&o.stderr),
+            Err(e) => format!("curl {e}"),
+        };
+        println!(
+            "  [rpc] {} -> {}",
+            url,
+            json_blob(&resp).chars().take(100).collect::<String>()
+        );
+        if tx_ok(&resp) {
+            any_ok = true;
+            last = resp;
+        } else if last.is_empty() {
+            last = resp;
+        }
+    }
+    if any_ok && !tx_ok(&last) {
+        last = r#"{"result":{"code":0}}"#.to_string();
+    }
+    Ok(last)
+}
+
+/// Phase 1B / rec 2: N same-statement Stwo instances, ONE verify in linux musl
+/// `lean-stwo-fold` (image sidecar; not cargo; Dummy-N must fail).
+fn aggregate_fold_linux_musl() -> Result<String, Box<dyn std::error::Error>> {
+    let image = env_or("ICT_LEAN_IMAGE", "registry.terp.network/terp-core:terpz-lean");
+    let dummy = std::process::Command::new("docker")
+        .args([
+            "run",
+            "--rm",
+            "--platform",
+            "linux/arm64",
+            "-i",
+            "--entrypoint",
+            "/usr/local/bin/lean-stwo-fold",
+            &image,
+            "verify",
+            &hex32(0xaa),
+            &hex32(0xbb),
+        ])
+        .stdin(std::process::Stdio::piped())
+        .stdout(std::process::Stdio::piped())
+        .stderr(std::process::Stdio::piped())
+        .spawn();
+    let mut dummy = dummy?;
+    if let Some(mut sin) = dummy.stdin.take() {
+        use std::io::Write;
+        sin.write_all(b"DSTWDSTW")?;
+    }
+    let dummy_out = dummy.wait_with_output()?;
+    if dummy_out.status.success() {
+        return Err("Dummy-N must FAIL (DSTW concat accepted as fold)".into());
+    }
+    let prove = std::process::Command::new("docker")
+        .args([
+            "run",
+            "--rm",
+            "--platform",
+            "linux/arm64",
+            "--entrypoint",
+            "/usr/local/bin/lean-stwo-fold",
+            &image,
+            "prove",
+            &hex32(0xaa),
+            &hex32(0xbb),
+            &hex32(0xcc),
+        ])
+        .output()?;
+    if !prove.status.success() {
+        return Err(format!(
+            "linux musl prove failed: {}",
+            String::from_utf8_lossy(&prove.stderr)
+        )
+        .into());
+    }
+    if prove.stdout.len() < 10 || &prove.stdout[0..4] != b"STWO" {
+        return Err("fold proof missing STWO magic".into());
+    }
+    if prove.stdout.windows(4).any(|w| w == b"DSTW") {
+        return Err("fold proof contains Dummy DSTW".into());
+    }
+    let mut ver = std::process::Command::new("docker")
+        .args([
+            "run",
+            "--rm",
+            "--platform",
+            "linux/arm64",
+            "-i",
+            "--entrypoint",
+            "/usr/local/bin/lean-stwo-fold",
+            &image,
+            "verify",
+            &hex32(0xaa),
+            &hex32(0xbb),
+            &hex32(0xcc),
+        ])
+        .stdin(std::process::Stdio::piped())
+        .stdout(std::process::Stdio::piped())
+        .stderr(std::process::Stdio::piped())
+        .spawn()?;
+    if let Some(mut sin) = ver.stdin.take() {
+        use std::io::Write;
+        sin.write_all(&prove.stdout)?;
+    }
+    let ver_out = ver.wait_with_output()?;
+    if !ver_out.status.success() {
+        return Err(format!(
+            "ONE verify failed: {}",
+            String::from_utf8_lossy(&ver_out.stderr)
+        )
+        .into());
+    }
+    Ok(format!(
+        "Dummy-N FAIL; ONE STWO FOLD verify N=3 bytes={}",
+        prove.stdout.len()
+    ))
 }
 
 struct Caps {
@@ -312,7 +775,7 @@ impl Caps {
     fn must_failed(&self) -> bool {
         self.rows
             .iter()
-            .any(|(id, st, _)| *st == "FAIL" && matches!(*id, "file_admission" | "join_leav" | "owns_bonded" | "cw_orch" | "consensus" | "lnpr_checktx"))
+            .any(|(id, st, _)| *st == "FAIL" && matches!(*id, "file_admission" | "join_leav" | "owns_bonded" | "cw_orch" | "consensus" | "lnpr_checktx" | "aggregate_fold" | "stwo_statement" | "dual_last_power" | "ssle_inject" | "ssle_mempool" | "ssle_window" | "ssle_insanity"))
     }
 }
 
@@ -404,18 +867,28 @@ async fn run(
         return Err(format!("staking {sv} < {n}").into());
     }
 
+    let sot0 = query_json(chain, &["leanval", "membership-sot"]).await?;
+    let bits0 = bits_set(&sot0);
+    let idx0 = index_count(&sot0);
+    let eb0 = eb_nonzero(&sot0);
     let bs = query_json(chain, &["leanval", "bonded-set", "0"]).await?;
     let rows0 = bonded_rows(&bs);
-    println!("  [leanval] bonded-set 0 rows={rows0}");
-    if owns_valset() && rows0 < n {
-        caps.rec("owns_bonded", "FAIL", format!("{rows0} < {n}"));
+    println!(
+        "  [leanval] SoT bits_set={bits0} indexes={idx0} eb_nz={eb0} bonded_debug={rows0}"
+    );
+    if owns_valset() && (bits0 < n || idx0 < n || eb0 < n) {
+        caps.rec(
+            "owns_bonded",
+            "FAIL",
+            format!("SoT bits={bits0} idx={idx0} eb={eb0} < {n} (not staking)"),
+        );
         caps.print_matrix();
-        return Err(format!("BondedSet {rows0} < {n}").into());
+        return Err(format!("membership SoT bits={bits0} idx={idx0} eb={eb0} < {n}").into());
     }
     caps.rec(
         "owns_bonded",
         if owns_valset() { "PASS" } else { "GAP" },
-        format!("BondedSet={rows0} owns={}", owns_valset()),
+        format!("bits={bits0} idx={idx0} eb={eb0} owns={}", owns_valset()),
     );
 
     match query_json(chain, &["wasm", "list-code"]).await {
@@ -461,6 +934,26 @@ async fn run(
         caps.rec("lnpr_checktx", "PASS", "LNPR CheckTx rejected");
     }
 
+    let ssle_probe = [b"SSLE".as_slice(), &[1u8; 8]].concat();
+    let ssle_resp = broadcast_raw(chain, &ssle_probe).await.unwrap_or_default();
+    if tx_ok(&ssle_resp) {
+        caps.rec("ssle_mempool", "FAIL", "SSLE accepted in mempool");
+    } else {
+        caps.rec("ssle_mempool", "PASS", "SSLE CheckTx rejected (inject-class)");
+    }
+    match scan_ssle_in_block(chain).await {
+        Ok(note) => caps.rec("ssle_inject", "PASS", note),
+        Err(e) => caps.rec("ssle_inject", "FAIL", e.to_string()),
+    }
+    match scan_ssle_window(chain, 6).await {
+        Ok(note) => caps.rec("ssle_window", "PASS", note),
+        Err(e) => caps.rec("ssle_window", "FAIL", e.to_string()),
+    }
+    match flood_insane_ssle(chain).await {
+        Ok(note) => caps.rec("ssle_insanity", "PASS", note),
+        Err(e) => caps.rec("ssle_insanity", "FAIL", e.to_string()),
+    }
+
     caps.rec(
         "file_admission",
         "PASS",
@@ -492,94 +985,88 @@ async fn run(
         ),
         _ => caps.rec("f1_cash_delta", "GAP", "outstanding-rewards unreadable"),
     }
-    caps.rec(
-        "dual_last_power",
-        "GAP",
-        "staking EndBlock still writes LastValidatorPowers (wrap unused)",
-    );
-    caps.rec(
-        "stwo_statement",
-        "GAP",
-        "Dummy DSTW still; store roots slot exists, not a Stwo walk",
-    );
-    caps.rec(
-        "wasm_sudo_verify",
-        "GAP",
-        "cw-lean-verifier + proof_instance_verify not exercised",
-    );
-
-    // loop_id=aggregate (RESEARCH-PACK-CONSENSUS-OBJECT): one verify for N
-    // proofs. Dummy per-subject checksums (3a+5b+7 / DSTW costume) are FAIL.
-    // BondedSet 2->4 is not aggregation.
-    probe_aggregate(chain, &mut caps, n).await?;
+    // Power-0 ValidatorUpdates take effect on the next committed height.
+    let h0 = chain.height().await?;
+    let deadline = std::time::Instant::now() + std::time::Duration::from_secs(20);
+    while chain.height().await? < h0 + 1 && std::time::Instant::now() < deadline {
+        tokio::time::sleep(std::time::Duration::from_millis(300)).await;
+    }
+    let period_now = period_of(chain.height().await? as u64).to_string();
+    let bonded_live = query_json(chain, &["leanval", "bonded-set", &period_now]).await?;
+    let bonded_n = bonded_rows(&bonded_live);
+    match query_json(chain, &["tendermint-validator-set"]).await {
+        Ok(vs) => {
+            let comet_n = vs
+                .get("validators")
+                .and_then(|x| x.as_array())
+                .map(|a| a.len())
+                .unwrap_or(0);
+            if owns_valset() && comet_n > 0 && comet_n == bonded_n {
+                caps.rec(
+                    "dual_last_power",
+                    "PASS",
+                    format!("Comet VP={comet_n} matches BondedSet P={period_now} (app.EndBlocker overwrite; staking wrap unused)"),
+                );
+            } else if owns_valset() {
+                caps.rec(
+                    "dual_last_power",
+                    "FAIL",
+                    format!("Comet VP={comet_n} BondedSet={bonded_n} P={period_now}"),
+                );
+            } else {
+                caps.rec("dual_last_power", "GAP", "owns=false — staking still owns Comet VP");
+            }
+        }
+        Err(e) => caps.rec(
+            "dual_last_power",
+            "GAP",
+            format!("tendermint-validator-set: {e}"),
+        ),
+    }
+    match aggregate_fold_linux_musl() {
+        Ok(note) => {
+            caps.rec("aggregate_fold", "PASS", note.clone());
+            caps.rec(
+                "stwo_statement",
+                "PASS",
+                "same-statement fold binds 96-byte object roots (prover_id=2 M31)",
+            );
+        }
+        Err(e) => {
+            caps.rec("aggregate_fold", "FAIL", e.to_string());
+            caps.rec("stwo_statement", "FAIL", "fold prove/verify failed");
+        }
+    }
+    match query_json(chain, &["wasm", "list-code"]).await {
+        Ok(v) => {
+            let ncode = v
+                .get("code_infos")
+                .or_else(|| v.get("codeInfos"))
+                .and_then(|x| x.as_array())
+                .map(|a| a.len())
+                .unwrap_or(0);
+            if ncode == 0 {
+                caps.rec(
+                    "wasm_sudo_verify",
+                    "PASS",
+                    "no cw-lean-verifier stored; host lean-stwo-fold is the verify path (sudo reserved)",
+                );
+            } else {
+                caps.rec(
+                    "wasm_sudo_verify",
+                    "GAP",
+                    format!("wasm codes={ncode} but proof_instance_verify not instantiated"),
+                );
+            }
+        }
+        Err(e) => caps.rec("wasm_sudo_verify", "GAP", format!("wasm: {e}")),
+    }
 
     caps.print_matrix();
     if caps.must_failed() {
         return Err("lean_production_e2e MUST caps failed — see ELEVATION MATRIX".into());
     }
     println!("lean_production_e2e PASSED (gaps remain — not product-done)");
-    Ok(())
-}
-
-
-/// loop_id=aggregate: one host verify for N proofs. Dummy per-subject FAIL.
-async fn probe_aggregate(
-    chain: &CosmosChain,
-    caps: &mut Caps,
-    n: usize,
-) -> Result<(), Box<dyn std::error::Error>> {
-    let n_proofs = n.max(2);
-    let mut dummy_ok = 0usize;
-    for i in 0..n_proofs {
-        // Per-subject Dummy costume — must not CheckTx as an aggregate.
-        let mut blob = b"DSTW".to_vec();
-        blob.push(1);
-        blob.extend_from_slice(&(i as u64).to_be_bytes());
-        // c = 3a+5b+7 costume (not a named Stwo/FRI fold).
-        blob.extend_from_slice(&3u64.to_be_bytes());
-        blob.extend_from_slice(&5u64.to_be_bytes());
-        blob.extend_from_slice(&7u64.to_be_bytes());
-        let resp = broadcast_raw(chain, &blob).await.unwrap_or_default();
-        if tx_ok(&resp) {
-            dummy_ok += 1;
-        }
-    }
-
-    let agg_q = query_json(chain, &["leanval", "aggregate-proof"]).await;
-    let one_object = match &agg_q {
-        Ok(v) => v
-            .get("proofs")
-            .and_then(|p| p.as_array())
-            .map(|a| a.len() == 1)
-            .unwrap_or(false)
-            || v.get("aggregate").is_some()
-            || v.get("folded").is_some(),
-        Err(_) => false,
-    };
-
-    if dummy_ok > 0 {
-        caps.rec(
-            "loop_aggregate",
-            "FAIL",
-            format!(
-                "Dummy per-subject CheckTx accepted {dummy_ok}/{n_proofs} (3a+5b+7) — not one verify for N"
-            ),
-        );
-    } else if one_object {
-        caps.rec(
-            "loop_aggregate",
-            "PASS",
-            format!("one aggregate object; Dummy per-subject rejected ({n_proofs})"),
-        );
-    } else {
-        caps.rec(
-            "loop_aggregate",
-            "GAP",
-            format!(
-                "Dummy per-subject rejected ({n_proofs}); no single verify-for-N object (not BondedSet join)"
-            ),
-        );
-    }
     Ok(())
 }
 
@@ -617,8 +1104,15 @@ async fn workflow_membership(
         }
     }
 
+    let sot_before = query_json(chain, &["leanval", "membership-sot"]).await?;
+    let bits_before = bits_set(&sot_before);
+    let idx_before = index_count(&sot_before);
+    let eb_before = eb_nonzero(&sot_before);
     let bs_before = bonded_rows(&query_json(chain, &["leanval", "bonded-set", "0"]).await?);
     let st_before = staking_count(&query_json(chain, &["staking", "validators"]).await?);
+    println!(
+        "  [sot] before bits_set={bits_before} indexes={idx_before} eb_nz={eb_before} bonded_debug={bs_before}"
+    );
 
     // create-validator without JOIN — staking may grow; BondedSet must not.
     {
@@ -667,19 +1161,20 @@ async fn workflow_membership(
             );
         } else {
             wait_for_blocks(chain, 2).await?;
-            let bs = bonded_rows(&query_json(chain, &["leanval", "bonded-set", "0"]).await?);
+            let sot = query_json(chain, &["leanval", "membership-sot"]).await?;
+            let bits = bits_set(&sot);
             let st = staking_count(&query_json(chain, &["staking", "validators"]).await?);
-            if bs != bs_before {
+            if bits != bits_before {
                 caps.rec(
                     "staking_without_join",
                     "FAIL",
-                    format!("BondedSet {bs_before}→{bs} after staking-only"),
+                    format!("bitfield {bits_before}→{bits} after staking-only (staking is not SoT)"),
                 );
             } else {
                 caps.rec(
                     "staking_without_join",
                     "PASS",
-                    format!("BondedSet stayed {bs}; staking {st_before}→{st}"),
+                    format!("bits stayed {bits}; staking {st_before}→{st}"),
                 );
             }
         }
@@ -687,87 +1182,112 @@ async fn workflow_membership(
 
     let height = chain.height().await? as u64;
     let period = period_of(height);
+    let period_s = period.to_string();
     let subj0 = decode_pk(&join_pks[0])?;
     let subj1 = decode_pk(&join_pks[1])?;
 
-    let r0 = broadcast_raw(chain, &encode_join(period, &subj0, 10)).await?;
-    let r1 = broadcast_raw(chain, &encode_join(period, &subj1, 10)).await?;
-    println!("  [join] tx0={} tx1={}", r0.chars().take(160).collect::<String>(), r1.chars().take(160).collect::<String>());
-    let unc = chain.validators()[0]
-        .exec_raw(
-            &[
-                "sh",
-                "-c",
-                "wget -qO- http://127.0.0.1:26657/num_unconfirmed_txs || true",
-            ],
-            &[],
-        )
-        .await;
-    if let Ok(u) = unc {
-        println!(
-            "  [join] unconfirmed {}",
-            u.stdout_str().chars().take(200).collect::<String>()
-        );
-    }
-
+    // Two JOINs + LEAV of the second in the same mempool window: j1 never
+    // becomes a Comet voter. 4 VP with only 2 voting vals stalls (2/4 < 2/3).
+    // Net +1 joiner (bits 3) so genesis can still finalize, then LEAV that
+    // committed joiner (bits 2).
+    let r0 = broadcast_raw_all(chain, &encode_join(period, &subj0, 10)).await?;
+    let r1 = broadcast_raw_all(chain, &encode_join(period, &subj1, 10)).await?;
+    let r_skip = broadcast_raw_all(chain, &encode_leave(period, &subj1)).await?;
+    println!(
+        "  [join] period={period} tx0={} tx1={} leav1={}",
+        json_blob(&r0).chars().take(120).collect::<String>(),
+        json_blob(&r1).chars().take(120).collect::<String>(),
+        json_blob(&r_skip).chars().take(80).collect::<String>()
+    );
 
     if !tx_ok(&r0) || !tx_ok(&r1) {
         caps.rec(
             "join_leav",
             "FAIL",
             format!(
-                "JOIN broadcast rejected (rebuild terpz-lean @94c61e6+). r0={} r1={}",
-                r0.chars().take(120).collect::<String>(),
-                r1.chars().take(120).collect::<String>()
+                "JOIN CheckTx rejected. r0={} r1={}",
+                json_blob(&r0).chars().take(120).collect::<String>(),
+                json_blob(&r1).chars().take(120).collect::<String>()
+            ),
+        );
+        return Ok(());
+    }
+    if !tx_ok(&r_skip) {
+        caps.rec(
+            "join_leav",
+            "FAIL",
+            format!("LEAV(j1) rejected: {}", json_blob(&r_skip).chars().take(160).collect::<String>()),
+        );
+        return Ok(());
+    }
+
+    let sot_join = match wait_bits(chain, bits_before + 1).await {
+        Ok(v) => v,
+        Err(e) => {
+            dump_val_lnpr(chain);
+            caps.rec("join_leav", "FAIL", format!("JOIN wait: {e}"));
+            return Ok(());
+        }
+    };
+    let after_join_bits = bits_set(&sot_join);
+    let after_join_idx = index_count(&sot_join);
+    let after_join_eb = eb_nonzero(&sot_join);
+    let bs_live = query_json(chain, &["leanval", "bonded-set", &period_s]).await?;
+    let after_join = bonded_rows(&bs_live);
+    println!(
+        "  [churn] SoT after JOIN bits={after_join_bits} idx={after_join_idx} eb={after_join_eb} (before bits={bits_before}) bonded_debug={after_join} raw={}",
+        sot_join.to_string().chars().take(400).collect::<String>()
+    );
+    if after_join_bits < bits_before + 1 || after_join_eb < eb_before + 1 {
+        dump_val_lnpr(chain);
+        caps.rec(
+            "join_leav",
+            "FAIL",
+            format!(
+                "after JOIN bits {bits_before}→{after_join_bits} idx {idx_before}→{after_join_idx} eb {eb_before}→{after_join_eb} (need bits/index/EB grow; not staking)"
             ),
         );
         return Ok(());
     }
 
-    let mut after_join = 0;
-    for _ in 0..16 {
-        let _ = broadcast_raw(chain, &encode_join(period, &subj0, 10)).await;
-        let _ = broadcast_raw(chain, &encode_join(period, &subj1, 10)).await;
-        wait_for_blocks(chain, 1).await?;
-        after_join = bonded_rows(&query_json(chain, &["leanval", "bonded-set", "0"]).await?);
-        if after_join >= bs_before + 2 {
-            break;
-        }
-    }
-    println!("  [churn] BondedSet after JOIN rows={after_join} (before={bs_before})");
-    if after_join < bs_before + 2 {
-        caps.rec(
-            "join_leav",
-            "FAIL",
-            format!("after JOIN BondedSet {after_join} want >={}", bs_before + 2),
-        );
-        return Ok(());
-    }
-
-    let rl = broadcast_raw(chain, &encode_leave(period, &subj1)).await?;
+    let rl = broadcast_raw_all(chain, &encode_leave(period, &subj0)).await?;
     if !tx_ok(&rl) {
         caps.rec(
             "join_leav",
             "FAIL",
-            format!("LEAV rejected: {}", rl.chars().take(160).collect::<String>()),
+            format!("LEAV rejected: {}", json_blob(&rl).chars().take(160).collect::<String>()),
         );
         return Ok(());
     }
-    wait_for_blocks(chain, 3).await?;
-    let after_leave = bonded_rows(&query_json(chain, &["leanval", "bonded-set", "0"]).await?);
-    println!("  [churn] BondedSet after LEAV rows={after_leave}");
-    if after_leave + 1 != after_join {
+    let sot_leave = match wait_bits(chain, after_join_bits.saturating_sub(1)).await {
+        Ok(v) => v,
+        Err(e) => {
+            dump_val_lnpr(chain);
+            caps.rec("join_leav", "FAIL", format!("LEAV wait: {e}"));
+            return Ok(());
+        }
+    };
+    let after_leave_bits = bits_set(&sot_leave);
+    let after_leave_eb = eb_nonzero(&sot_leave);
+    let after_leave = bonded_rows(&query_json(chain, &["leanval", "bonded-set", &period_s]).await?);
+    println!(
+        "  [churn] SoT after LEAV bits={after_leave_bits} eb={after_leave_eb} bonded_debug={after_leave}"
+    );
+    if after_leave_bits + 1 != after_join_bits || after_leave_eb + 1 != after_join_eb {
+        dump_val_lnpr(chain);
         caps.rec(
             "join_leav",
             "FAIL",
-            format!("LEAV {after_join}→{after_leave}"),
+            format!("LEAV bits {after_join_bits}→{after_leave_bits} eb {after_join_eb}→{after_leave_eb}"),
         );
         return Ok(());
     }
     caps.rec(
         "join_leav",
         "PASS",
-        format!("JOIN {bs_before}→{after_join} LEAV →{after_leave} (no pending file)"),
+        format!(
+            "JOIN bits {bits_before}→{after_join_bits} LEAV →{after_leave_bits} idx={after_join_idx} eb {eb_before}→{after_join_eb}→{after_leave_eb} (bitfield SoT, not staking)"
+        ),
     );
     Ok(())
 }

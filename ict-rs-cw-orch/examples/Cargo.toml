@@ -1,0 +1,35 @@
+[package]
+name = "ict-rs-cw-orch"
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+description = "Bridge between ict-rs and cw-orchestrator: spawn local chains via ict-rs, interact via cw-orch Daemon"
+
+[features]
+default = []
+oline = ["dep:o-line-sdl"]
+docker = []
+
+[dependencies]
+cw-orch-core = { git = "https://github.com/permissionlessweb/cw-orchestrator", rev = "ec4d693aad80ee70ddbd77c3b78c9807bedb6be0", default-features = false, features = ["terp"] }
+cw-orch-daemon = { git = "https://github.com/permissionlessweb/cw-orchestrator", rev = "ec4d693aad80ee70ddbd77c3b78c9807bedb6be0" }
+ict-rs = { path = "../ict-rs", features = ["docker", "terp", "testing"] }
+o-line-sdl = { path = "../../o-line", features = ["interface", "testing"], optional = true }
+thiserror = "2"
+tokio = { version = "1", features = ["rt", "rt-multi-thread", "macros"] }
+tracing = "0.1"
+tracing-subscriber = { version = "0.3", features = ["env-filter"] }
+serde_json = "1"
+rustls = { version = "0.23", default-features = false, features = ["ring", "std"] }
+
+[[example]]
+name = "lean_production_e2e"
+required-features = ["docker"]
+
+[[example]]
+name = "lean_testnet_gates"
+required-features = ["docker"]
+
+[[example]]
+name = "lean_ssle_load"
+required-features = ["docker"]

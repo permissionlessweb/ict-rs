@@ -59,7 +59,9 @@ ci_features := "docker,terp,testing"
 # Same suite set as ict-ci::SUITES. Do not add examples here unless CI runs them.
 ci-build:
     cargo build -p ict-rs --release --features {{ci_features}} --bin ict-ci \
-      --example ibc_transfer --example polytone
+      --example ibc_transfer --example polytone --example state_sync \
+      --example basic_cosmos --example integration_test --example ibc_hooks --example pfm \
+      --example circuit_deposit
 
 # Run a prebuilt suite. Usage: just ci-run ibc_transfer
 ci-run suite:
@@ -97,4 +99,16 @@ ci-fetch-terp dest="/tmp/terp-prebuilt":
 # Rebuild linux/amd64 ict-ci via Dockerfile.ci (same path as GHA rebuild job).
 ci-rebuild-docker:
     docker build --platform linux/amd64 -f Dockerfile.ci -t ict-rs-ci:rebuild --target export ..
+
+# Curate linux/amd64 tarball from ict-ci.rs suite list. Does not upload.
+ci-curate:
+    scripts/ci/curate-tarball.sh checkpoint
+
+# Publish commits/<HEAD> and rewrite scripts/ci/prebuilt.env (no git commit).
+ci-checkpoint:
+    scripts/ci/curate-tarball.sh checkpoint --publish
+
+# Also copy to releases/ict-rs/<tag>/. Usage: just ci-release tag=v0.2.0
+ci-release tag:
+    RELEASE_TAG={{tag}} scripts/ci/curate-tarball.sh release --publish
 

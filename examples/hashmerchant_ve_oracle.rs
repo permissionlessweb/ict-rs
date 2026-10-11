@@ -21,6 +21,7 @@ use std::sync::Arc;
 use ict_rs::chain::cosmos::CosmosChain;
 use ict_rs::chain::{Chain, ChainType, SigningAlgorithm, TestContext};
 use ict_rs::runtime::docker::DockerBackend;
+use ict_rs::image_env::terp_image_version;
 use ict_rs::runtime::{DockerConfig, DockerImage, RuntimeBackend};
 
 use tokio::io::{AsyncReadExt, AsyncWriteExt};
@@ -424,10 +425,11 @@ async fn run_test(
         chain_id: terp_chain_id.into(),
         images: vec![DockerImage {
             repository: std::env::var("ICT_UPGRADE_REPO")
-                .unwrap_or_else(|_| "terpnetwork/terp-core".into()),
+                .unwrap_or_else(|_| "registry.terp.network/terp-core".into()),
             version: std::env::var("ICT_LEAN_IMAGE")
                 .or_else(|_| std::env::var("ICT_UPGRADE_TO"))
-                .unwrap_or_else(|_| "local-zk".into()),
+                .or_else(|_| std::env::var("TERP_IMAGE_VERSION"))
+                .unwrap_or_else(terp_image_version),
             uid_gid: None,
         }],
         bin: "terpd".into(),

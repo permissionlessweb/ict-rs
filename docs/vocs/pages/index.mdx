@@ -1,0 +1,23 @@
+---
+title: ict-rs
+description: Docker-backed interchain test runtime in Rust
+---
+
+# ict-rs
+
+Rust re-implementation of Interchain Test. It starts **real Docker chains** for integration tests — not mocks of consensus.
+
+```sh
+cargo run --example basic_cosmos --features docker
+cargo test
+```
+
+| Feature | What it enables |
+|---|---|
+| `docker` | Docker runtime (required for real tests) |
+| `testing` | `TestChain`, `TestEnv`, mock relayer |
+| `ethereum` | Anvil / EVM |
+| `terp` | Terp modules (tokenfactory, hashmerchant, …) |
+| `full` | All of the above |
+
+Edit these pages in `crates/ict-rs/docs/vocs/pages`. Permissionless docs copies them at compile time.

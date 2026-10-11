@@ -35,7 +35,7 @@ const TEST_LEAN_VERIFIER_TERP: &str = "terp1qqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqq5ffn
 const ERR_SUDO_LEAN_VERIFIER_CODE: i64 = 2;
 
 fn image_repo() -> String {
-    env_or("ICT_LEAN_IMAGE_REPO", "terpnetwork/terp-core")
+    env_or("ICT_LEAN_IMAGE_REPO", "registry.terp.network/terp-core")
 }
 
 fn image_tag() -> String {

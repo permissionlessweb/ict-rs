@@ -27,6 +27,8 @@ feeshare = []
 drip = []
 clock = []
 hashmerchant = []
+# Local Docker headstash epoch: sidecar + cw-headstash claim messages.
+epoch-claim = ["docker", "hashmerchant", "dep:cw-headstash", "dep:cosmwasm-std"]
 smartaccount = []
 globalfee = []
 akash = []
@@ -49,6 +51,7 @@ futures-util = { version = "0.3", features = ["sink"], optional = true }
 cosmrs = { path = "../../cosmos-rust/cosmrs", package = "cosmrs", features = ["cosmwasm", "grpc"] }
 log = "0.4.22"
 prost = "0.14"
+ics23 = { path = "../../ics23/rust", package = "ics23", default-features = false, features = ["std", "host-functions"] }
 tendermint = { path = "../../tendermint-rs/tendermint", package = "tendermint" }
 tendermint-rpc = { path = "../../tendermint-rs/rpc", package = "tendermint-rpc", features = ["http-client", "websocket-client"] }
 tonic = { version = "0.14", optional = true }
@@ -64,15 +67,18 @@ sha2 = "0.10"
 sha3 = { version = "0.10", optional = true }
 
 # Utilities
+tempfile = "3"
 bech32 = "0.11"
 hex = "0.4"
 ed25519-dalek = { version = "2.1", features = ["rand_core"] }
+cw-headstash = { path = "../../headstash/contracts/cw-headstash", optional = true, default-features = false, features = ["interface"] }
+cosmwasm-std = { path = "../../cosmwasm/packages/std", optional = true }
 rand = "0.8"
 toml = "0.8"
 tracing = "0.1"
 
 # Derive macros
-cw-orch-core = { path = "../../cw-orchestrator/packages/cw-orch-core", package = "cw-orch-core", default-features = false, features = ["terp"] }
+cw-orch-core = { git = "https://github.com/permissionlessweb/cw-orchestrator", rev = "ec4d693aad80ee70ddbd77c3b78c9807bedb6be0", features = ["terp"] }
 # Force halo2-compatible rayon when a sibling crate enables zk
 rayon = "=1.10.0"
 ict-rs-derive = { path = "../ict-rs-derive" }
@@ -86,12 +92,14 @@ blake3 = "1"
 criterion = { version = "0.5", features = ["html_reports", "async_tokio"] }
 k256 = { version = "0.13", features = ["ecdsa"] }
 serde_json = "1"
+zk-cosmwasm = { path = "../../cosmwasm/packages/zk" }
 sha2 = "0.10"
 tar = "0.4"
 tempfile = { version = "3", optional = false }
 terp-rs = { path = "../../terp-rs/crates/sdk", package = "terp-rs", features = ["rpc"] }
 zk-cosmwasm = { path = "../../cosmwasm/packages/zk", default-features = false }
 tokio = { version = "1", features = ["full"] }
+cw-orch-ibc = { path = "../../terp-rs/scripts/ibc-ops/cw-orch-ibc" }
 tokio-test = "0.4"
 tracing-subscriber = { version = "0.3", features = ["env-filter"] }
 
@@ -108,6 +116,14 @@ name = "basic_cosmos"
 path = "../examples/basic_cosmos.rs"
 
 [[example]]
+name = "penumbra_kms_local"
+path = "../examples/penumbra_kms_local.rs"
+
+[[example]]
+name = "penumbra_terp_relay"
+path = "../examples/penumbra_terp_relay.rs"
+
+[[example]]
 name = "ibc_transfer"
 path = "../examples/ibc_transfer.rs"
 required-features = ["docker"]
@@ -116,6 +132,21 @@ required-features = ["docker"]
 name = "ibc_transfer_e2e"
 path = "../examples/ibc_transfer_e2e.rs"
 required-features = ["docker"]
+
+[[example]]
+name = "ibc_v2"
+path = "../examples/ibc_v2.rs"
+required-features = ["docker", "testing", "terp"]
+
+[[example]]
+name = "ibc_wasm_lc"
+path = "../examples/ibc_wasm_lc.rs"
+required-features = ["docker", "testing", "terp"]
+
+[[example]]
+name = "hasher_ibc_bench"
+path = "../examples/hasher_ibc_bench.rs"
+required-features = ["docker", "testing", "terp"]
 
 [[example]]
 name = "integration_test"
@@ -134,6 +165,11 @@ required-features = ["docker", "testing", "terp"]
 [[example]]
 name = "ibc_hooks"
 path = "../examples/ibc_hooks.rs"
+
+[[example]]
+name = "ibc_callbacks"
+path = "../examples/ibc_callbacks.rs"
+required-features = ["docker"]
 
 [[example]]
 name = "hashmerchant"
@@ -179,6 +215,11 @@ name = "loyalty_rewards"
 path = "../examples/loyalty_rewards.rs"
 required-features = ["docker", "hashmerchant"]
 
+[[example]]
+name = "epoch_claim"
+path = "../examples/epoch_claim.rs"
+required-features = ["epoch-claim"]
+
 # Curated zk-jwt elevation of loyalty_rewards (design + contract path; chain optional).
 [[example]]
 name = "loyalty_rewards_zkjwt"
@@ -186,10 +227,8 @@ path = "../examples/loyalty_rewards_zkjwt.rs"
 
 # Marketplace mirror inventory harness (parallel to loyalty_rewards).
 # Offline delta: marketplace_inventory_offline. Docker: needs Agent A wasm.
-[[example]]
-name = "marketplace_inventory"
-path = "../examples/marketplace_inventory.rs"
-required-features = ["docker", "hashmerchant"]
+# NOTE(marketplace_inventory): source file removed; stanza dropped 2026-09-04
+# so plain `cargo test` resolves. Restore with the .rs file when revived.
 
 [[example]]
 name = "marketplace_inventory_offline"
@@ -197,33 +236,22 @@ path = "../examples/marketplace_inventory_offline.rs"
 
 # HashMerchant NFT oracle minter lab (hm-loyalty/v1 + Mode A/C price).
 # Offline default; ICT_HM_NFT_CHAIN=1 for Docker Mode C when wasm present.
-[[example]]
-name = "hashmerchant_nft_oracle_mint"
-path = "../examples/hashmerchant_nft_oracle_mint.rs"
+# NOTE(hashmerchant_nft_oracle_mint): source file removed; see above.
 
 # HashMerchant L3: fresh Ubuntu → hm-support bootstrap → runtime health/VE (install packaging).
 # Handoff: docs/bootstrap/hashmerchant-ict-bootstrap-e2e-handoff.md
-[[example]]
-name = "hashmerchant_bootstrap_ubuntu"
-path = "../examples/hashmerchant_bootstrap_ubuntu.rs"
-required-features = ["docker"]
+# NOTE(hashmerchant_bootstrap_ubuntu): source file removed; stanza dropped 2026-09-04.
 
 # Client → isolated server ingress conductor (PR1: S1 mock server + S2 client attach).
 # Design: docs/bootstrap/hashmerchant-client-ingress-sequence.md
-[[example]]
-name = "hashmerchant_client_ingress_e2e"
-path = "../examples/hashmerchant_client_ingress_e2e.rs"
-required-features = ["docker"]
+# NOTE(hashmerchant_client_ingress_e2e): source file removed; stanza dropped 2026-09-04.
 
 [[example]]
 name = "snapshot"
 path = "../examples/snapshot.rs"
 required-features = ["docker"]
 
-[[example]]
-name = "calendar_demo"
-path = "../examples/calendar_demo.rs"
-required-features = ["docker"]
+# NOTE(calendar_demo): source file removed; stanza dropped 2026-09-04.
 
 [[example]]
 name = "nostr_calendar"

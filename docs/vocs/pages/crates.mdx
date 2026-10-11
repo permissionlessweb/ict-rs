@@ -1,0 +1,16 @@
+---
+title: Workspace crates
+description: ict-rs workspace members
+---
+
+# Workspace crates
+
+| Crate | Role |
+|---|---|
+| `ict-rs` | Chain, node, Docker runtime, extensions |
+| `ict-rs-derive` | Proc macros for typed chain calls |
+| `ict-rs-codegen` | Proto → Rust |
+| `ict-rs-cw-orch` | cw-orch adapter |
+| `pir-live-chain` | Private-inference-rent live-chain helpers |
+
+Layout: `ChainConfig` → `CosmosChain` → `ChainNode`(s) → Docker containers, plus genesis (keys, gentx, collect).

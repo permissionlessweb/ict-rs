@@ -286,6 +286,24 @@ impl RelayerCommander for CosmosRlyCommander {
         ]
     }
 
+    fn update_wasm_client_cmd(
+        &self,
+        host_chain: &str,
+        client_id: &str,
+        home: &str,
+    ) -> Vec<String> {
+        vec![
+            "rly".to_string(),
+            "tx".to_string(),
+            "update-clients".to_string(),
+            host_chain.to_string(),
+            "--client".to_string(),
+            client_id.to_string(),
+            "--home".to_string(),
+            home.to_string(),
+        ]
+    }
+
     fn start_cmd(&self, home: &str, paths: &[&str]) -> Vec<String> {
         let mut cmd = vec![
             "rly".to_string(),

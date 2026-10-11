@@ -40,8 +40,8 @@ use ict_rs::prelude::*;
 // ---------------------------------------------------------------------------
 
 /// Docker image for the zk-wasmvm enabled chain.
-const ZK_IMAGE_REPO: &str = "registry.terp.network/terp-core";
-const ZK_IMAGE_VERSION: &str = "local-zk";
+
+
 
 /// Chain configuration constants.
 const CHAIN_ID: &str = "120u-1";
@@ -68,11 +68,7 @@ fn terp_zk_config() -> ChainConfig {
         chain_type: ChainType::Cosmos,
         name: "terp".to_string(),
         chain_id: CHAIN_ID.to_string(),
-        images: vec![DockerImage {
-            repository: ZK_IMAGE_REPO.to_string(),
-            version: ZK_IMAGE_VERSION.to_string(),
-            uid_gid: None,
-        }],
+        images: vec![terp_docker_image()],
         bin: "terpd".to_string(),
         bech32_prefix: BECH32_PREFIX.to_string(),
         denom: DENOM.to_string(),
@@ -243,7 +239,7 @@ async fn run_test(chain: &mut CosmosChain) -> Result<(), Box<dyn std::error::Err
         });
     let vk_path_alt = zk_root.join("headstash_keys/verifying_key.bin");
     let vk_resolved = if vk_path.exists() {
-        Some(vk_path)
+        Some(vk_path.clone())
     } else if vk_path_alt.exists() {
         Some(vk_path_alt)
     } else {
@@ -616,8 +612,8 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
     println!(
         "Chain: {} (image: {}:{})",
         chain.chain_id(),
-        ZK_IMAGE_REPO,
-        ZK_IMAGE_VERSION
+        terp_image_repo(),
+        terp_image_version()
     );
 
     // Run test, then always clean up.

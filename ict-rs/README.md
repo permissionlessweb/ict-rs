@@ -34,7 +34,7 @@ for spinning up Cosmos chain environments in tests and CI.
 
 Hardcoded corridor defaults (RPC **:18232**, miner dest, `terp-dest-binding-v0` seal).
 
-```rust
+```ignore
 // Cargo.toml: ict-rs = { features = ["zakura"] }  // pulls docker
 use ict_rs::prelude::*;
 use std::sync::Arc;
@@ -50,6 +50,8 @@ async fn bring_up_zakura(rt: Arc<dyn IctRuntime /* RuntimeBackend */>) {
 ```
 
 Regtest only — not mainnet ZEC.
+
+Crosslink (TFL/finality) on a Zakura fork is a separate loop: SSOT `../docs/ZAKURA_CROSSLINK_LOOP.md`, workflow `/workflow zakura-crosslink`. E2E lives in `tests/zakura_crosslink_e2e.rs` once CX4 is crafted; `ZAKURA_CROSSLINK_LAB=1` is fail-closed.
 
 ```toml
 # Minimal test environment (no Ethereum, no Terp)
@@ -95,7 +97,7 @@ is ~2 seconds.
 
 ### Architecture
 
-```
+```text
                 bootstrap()                          spawn()
   ┌──────────────────────────┐         ┌──────────────────────────────┐
   │ Cosmos chain (full)      │         │ New container (empty)        │
@@ -116,7 +118,7 @@ is ~2 seconds.
 
 `ChainSnapshot` (genesis.json, validator keys, contract metadata)
 → `SnapshotStore::save()` → filesystem directory:
-```
+```text
 {root}/{chain_id}-h{height}-{hash[:8]}/
   snapshot.json    # full ChainSnapshot (compact JSON)
   genesis.json     # standalone genesis for debugging
@@ -125,7 +127,7 @@ is ~2 seconds.
 
 ### Key types
 
-```rust
+```ignore
 pub struct ChainSnapshot {
     pub metadata: SnapshotMetadata,    // chain_id, height, genesis_hash, etc.
     pub genesis_json: serde_json::Value,

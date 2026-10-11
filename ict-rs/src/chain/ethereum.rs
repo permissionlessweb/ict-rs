@@ -69,6 +69,12 @@ pub struct AnvilChain {
     initialized: bool,
     accounts: Vec<AnvilAccount>,
     rpc_port: u16,
+    /// Host publish of RPC (0 = ephemeral). Pin this when joining another chain's network.
+    pub rpc_host_port: u16,
+    /// Optional `anvil --chain-id` (omit for default 31337 lab). Use 8453 for a Base sibling.
+    pub anvil_chain_id: Option<u64>,
+    /// Join this Docker network instead of creating/destroying one (sibling sidecar).
+    pub join_existing_network: Option<NetworkId>,
 }
 
 impl std::fmt::Debug for AnvilChain {
@@ -106,6 +112,9 @@ impl AnvilChain {
             initialized: false,
             accounts,
             rpc_port: ANVIL_RPC_PORT,
+            rpc_host_port: 0,
+            anvil_chain_id: None,
+            join_existing_network: None,
         }
     }
 
@@ -221,11 +230,11 @@ impl AnvilChain {
             "send",
             "--private-key",
             from_private_key,
-            "--create",
-            bytecode,
             "--rpc-url",
             &rpc,
             "--json",
+            "--create",
+            bytecode,
         ])
         .await
     }
@@ -265,16 +274,42 @@ impl AnvilChain {
         self.exec_cast(&args).await
     }
 
-    /// Get transaction receipt.
+    /// Receipt must show up within about ten seconds.
+    /// `cast receipt` without `--async` waits forever, so a bad hash keeps the lab containers up.
     pub async fn get_receipt(&self, tx_hash: &str) -> Result<String> {
         let rpc = self.internal_rpc_url();
-        let output = self
-            .exec_cast(&["receipt", tx_hash, "--json", "--rpc-url", &rpc])
-            .await?;
-        Ok(output.stdout_str())
+        let mut last = String::new();
+        for _ in 0..16 {
+            let output = self
+                .exec_cast(&[
+                    "receipt",
+                    tx_hash,
+                    "--json",
+                    "--async",
+                    "--rpc-url",
+                    &rpc,
+                ])
+                .await?;
+            let s = output.stdout_str();
+            if s.contains("transactionHash") || s.contains("\"blockNumber\"") {
+                return Ok(s);
+            }
+            last = format!("{}{}", s, output.stderr_str());
+            tokio::time::sleep(std::time::Duration::from_millis(400)).await;
+        }
+        Err(IctError::Timeout {
+            what: format!("anvil receipt {tx_hash}: {last}"),
+            duration: std::time::Duration::from_secs(8),
+        })
     }
 
-    fn internal_rpc_url(&self) -> String {
+    /// Loopback as seen *inside* this Anvil container.
+    pub fn internal_rpc_url(&self) -> String {
+        format!("http://127.0.0.1:{}", self.rpc_port)
+    }
+
+    /// Docker DNS RPC as seen by sibling containers (DREGG watchers and `exec_cast`).
+    pub fn docker_dns_rpc_url(&self) -> String {
         format!("http://{}:{}", self.hostname, self.rpc_port)
     }
 }
@@ -298,19 +333,26 @@ impl Chain for AnvilChain {
         self.hostname = format!("{}-anvil-0", self.cfg.chain_id);
         let volume_name = format!("{}-{}", ctx.test_name, self.hostname);
 
-        // Pre-cleanup: remove stale containers and network from a previous
-        // failed run. Containers must be removed before the network since
-        // Docker refuses to remove a network with active endpoints.
         {
             let container_name = format!("ict-{}-{}", ctx.test_name, self.hostname);
             let stale = crate::runtime::ContainerId(container_name);
             let _ = self.runtime.stop_container(&stale).await;
             let _ = self.runtime.remove_container(&stale).await;
-            let _ = self.runtime.remove_network(&NetworkId(ctx.network_id.clone())).await;
+            if self.join_existing_network.is_none() {
+                let _ = self
+                    .runtime
+                    .remove_network(&NetworkId(ctx.network_id.clone()))
+                    .await;
+            }
         }
 
-        info!(chain = %self.cfg.chain_id, "Creating Anvil network");
-        let network_id = self.runtime.create_network(&ctx.network_id).await?;
+        let network_id = if let Some(n) = self.join_existing_network.clone() {
+            info!(chain = %self.cfg.chain_id, "Joining existing Docker network as sibling sidecar");
+            n
+        } else {
+            info!(chain = %self.cfg.chain_id, "Creating Anvil network");
+            self.runtime.create_network(&ctx.network_id).await?
+        };
 
         // Pull the Foundry image
         if let Some(image) = self.cfg.images.first() {
@@ -330,23 +372,39 @@ impl Chain for AnvilChain {
 
         let block_time = ANVIL_BLOCK_TIME.to_string();
         let num_accounts = ANVIL_NUM_ACCOUNTS.to_string();
+        let chain_id_arg = self.anvil_chain_id.map(|id| id.to_string());
+        let mut cmd = vec![
+            "--host".to_string(),
+            "0.0.0.0".to_string(),
+            "--block-time".to_string(),
+            block_time,
+            "--accounts".to_string(),
+            num_accounts,
+        ];
+        // Lab ETH anvil: no --chain-id (Foundry default 31337). Base sibling: --chain-id 8453.
+        if let Some(id) = chain_id_arg.as_ref() {
+            cmd.push("--chain-id".to_string());
+            cmd.push(id.clone());
+            // Nightly foundry rejects 8453 without optimism; pin Ethereum family, keep chain id.
+            if id == "8453" {
+                cmd.push("--network".to_string());
+                cmd.push("ethereum".to_string());
+            }
+        }
 
         let opts = ContainerOptions {
             image,
             name: format!("ict-{}-{}", ctx.test_name, self.hostname),
             network_id: Some(network_id.clone()),
             env: Vec::new(),
-            cmd: vec![
-                "--host".to_string(),
-                "0.0.0.0".to_string(),
-                "--block-time".to_string(),
-                block_time,
-                "--accounts".to_string(),
-                num_accounts,
-            ],
+            cmd,
             entrypoint: Some(vec!["anvil".to_string()]),
             ports: vec![PortBinding {
-                host_port: 0,
+                host_port: if self.rpc_host_port == 0 {
+                    0
+                } else {
+                    self.rpc_host_port
+                },
                 container_port: self.rpc_port,
                 protocol: "tcp".to_string(),
             }],
@@ -419,8 +477,12 @@ impl Chain for AnvilChain {
         if let Some(ref vol) = self.volume_name {
             let _ = self.runtime.remove_volume(vol).await;
         }
-        if let Some(id) = self.network_id.take() {
-            let _ = self.runtime.remove_network(&id).await;
+        if self.join_existing_network.is_none() {
+            if let Some(id) = self.network_id.take() {
+                let _ = self.runtime.remove_network(&id).await;
+            }
+        } else {
+            self.network_id.take();
         }
         Ok(())
     }
@@ -447,7 +509,12 @@ impl Chain for AnvilChain {
     }
 
     fn host_rpc_address(&self) -> String {
-        format!("http://localhost:{}", self.rpc_port)
+        let p = if self.rpc_host_port == 0 {
+            self.rpc_port
+        } else {
+            self.rpc_host_port
+        };
+        format!("http://127.0.0.1:{p}")
     }
 
     fn host_grpc_address(&self) -> String {

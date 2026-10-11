@@ -111,6 +111,14 @@ pub trait RelayerCommander: Send + Sync {
 
     fn update_clients_cmd(&self, path: &str, home: &str) -> Vec<String>;
 
+    /// CLI to update an 08-wasm (or other) client by host chain + client id.
+    fn update_wasm_client_cmd(
+        &self,
+        host_chain: &str,
+        client_id: &str,
+        home: &str,
+    ) -> Vec<String>;
+
     fn start_cmd(&self, home: &str, paths: &[&str]) -> Vec<String>;
 
     fn flush_cmd(&self, path: &str, channel_id: &str, home: &str) -> Vec<String>;
@@ -456,6 +464,20 @@ impl Relayer for DockerRelayer {
             .commander
             .update_clients_cmd(path_name, &self.home_dir);
         info!(relayer = %self.commander.name(), path = %path_name, "Updating clients");
+        self.exec_oneoff(&cmd, &[]).await?;
+        Ok(())
+    }
+
+    async fn update_wasm_client(&self, host_chain: &str, client_id: &str) -> Result<()> {
+        let cmd = self
+            .commander
+            .update_wasm_client_cmd(host_chain, client_id, &self.home_dir);
+        info!(
+            relayer = %self.commander.name(),
+            host = %host_chain,
+            client = %client_id,
+            "Updating wasm/IBC client"
+        );
         self.exec_oneoff(&cmd, &[]).await?;
         Ok(())
     }

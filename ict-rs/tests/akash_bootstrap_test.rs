@@ -299,13 +299,45 @@ async fn test_akash_mock_sidecar_config() {
     );
 
     assert_eq!(config.name, "akash-provider");
-    assert_eq!(config.image.repository, "ghcr.io/akash-network/provider");
+    if std::env::var("PIR_PROVIDER_IMAGE")
+        .ok()
+        .filter(|s| !s.is_empty())
+        .is_none()
+    {
+        assert_eq!(config.image.repository, "ghcr.io/akash-network/provider");
+    }
     assert_eq!(config.ports.len(), 2);
     assert!(config.ports.contains(&"8443".to_string()));
     assert!(config.ports.contains(&"8444".to_string()));
     assert!(!config.pre_start);
     assert!(!config.validator_process);
     assert_eq!(config.ready_timeout_secs, 60);
+    assert!(
+        config
+            .volumes
+            .iter()
+            .any(|v| v.source == "/var/run/docker.sock" && v.target == "/var/run/docker.sock"),
+        "provider sidecar must mount the docker socket to spawn lease containers"
+    );
+
+    let pir = ict_rs::cosmos::docker_sidecar::pir_provider_sidecar_config();
+    assert_eq!(pir.name, "pir-provider");
+    assert_eq!(pir.cmd, vec!["pir".to_string(), "sidecar".to_string()]);
+    assert!(pir.ports.contains(&"8444".to_string()));
+    assert!(
+        pir.volumes
+            .iter()
+            .any(|v| v.source == "/var/run/docker.sock"),
+        "re-zerve sidecar must mount docker.sock"
+    );
+    if std::env::var("PIR_PROVIDER_IMAGE")
+        .ok()
+        .filter(|s| !s.is_empty())
+        .is_none()
+    {
+        assert_eq!(pir.image.repository, "akash-provider-pir");
+        assert_eq!(pir.image.version, "local");
+    }
 
     // Verify oracle feeder config
     let oracle_cfg = ict_rs::cosmos::docker_sidecar::oracle_feeder_config(

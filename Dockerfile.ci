@@ -9,9 +9,15 @@ COPY . /crates
 ENV CARGO_TERM_COLOR=always \
     CARGO_TARGET_DIR=/crates/ict-rs/target
 RUN cargo build -p ict-rs --release --features docker,terp,testing \
-      --bin ict-ci --example ibc_transfer --example polytone
+      --bin ict-ci --example ibc_transfer --example polytone --example state_sync \
+      --example basic_cosmos --example integration_test --example ibc_hooks --example pfm
 
 FROM debian:bookworm-slim AS export
 COPY --from=build /crates/ict-rs/target/release/ict-ci /out/ict-ci
 COPY --from=build /crates/ict-rs/target/release/examples/ibc_transfer /out/examples/ibc_transfer
 COPY --from=build /crates/ict-rs/target/release/examples/polytone /out/examples/polytone
+COPY --from=build /crates/ict-rs/target/release/examples/state_sync /out/examples/state_sync
+COPY --from=build /crates/ict-rs/target/release/examples/basic_cosmos /out/examples/basic_cosmos
+COPY --from=build /crates/ict-rs/target/release/examples/integration_test /out/examples/integration_test
+COPY --from=build /crates/ict-rs/target/release/examples/ibc_hooks /out/examples/ibc_hooks
+COPY --from=build /crates/ict-rs/target/release/examples/pfm /out/examples/pfm

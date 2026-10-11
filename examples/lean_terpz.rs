@@ -75,7 +75,7 @@ fn env_or(key: &str, default: &str) -> String {
 }
 
 fn image_repo() -> String {
-    env_or("ICT_LEAN_REPO", "terpnetwork/terp-core")
+    env_or("ICT_LEAN_REPO", "registry.terp.network/terp-core")
 }
 
 fn image_tag() -> String {

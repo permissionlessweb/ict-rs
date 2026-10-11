@@ -11,6 +11,10 @@ CRATES="$(cd "$ROOT/.." && pwd)"
 OUTDIR="${1:-$ROOT/dist}"
 PLATFORM="${ICT_RS_BUILD_PLATFORM:-linux/amd64}"
 IMAGE="${ICT_RS_BUILD_IMAGE:-rust:1.89-bookworm}"
+ICT_RS_ROOT="$ROOT"
+# shellcheck source=suites.sh
+. "$ROOT/scripts/ci/suites.sh"
+EXAMPLE_FLAGS="$(ict_ci_example_flags | tr '\n' ' ')"
 
 case "$PLATFORM" in
   linux/amd64|linux/x86_64) TDIR="target-linux-amd64" ;;
@@ -33,8 +37,8 @@ docker run --rm --platform "$PLATFORM" \
     apt-get update
     DEBIAN_FRONTEND=noninteractive apt-get install -y --no-install-recommends \\
       pkg-config libssl-dev protobuf-compiler cmake clang git ca-certificates
-    cargo build -p ict-rs --release --features docker,terp,testing \\
-      --bin ict-ci --example ibc_transfer --example polytone
+    cargo build -p ict-rs --release --features docker,terp,testing \
+      --bin ict-ci $EXAMPLE_FLAGS
   "
 
 case "$PLATFORM" in

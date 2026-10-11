@@ -51,6 +51,7 @@ pub fn hash_market_server_config(
         validator_process: true,
         health_endpoint: Some("/health".into()),
         ready_timeout_secs: 30,
+        volumes: vec![],
     }
 }
 
@@ -212,6 +213,7 @@ pub fn hash_market_client_config(
         validator_process: true,
         health_endpoint: None,
         ready_timeout_secs: 10,
+        volumes: vec![],
     }
 }
 
@@ -239,6 +241,7 @@ pub fn nostr_relay_config() -> SidecarConfig {
         validator_process: false,
         health_endpoint: None,
         ready_timeout_secs: 10,
+        volumes: vec![],
     }
 }
 
@@ -255,6 +258,31 @@ pub fn nostr_relay_config() -> SidecarConfig {
 /// - `AKASH_NODE` — local chain RPC endpoint
 ///
 /// Mounts `/var/run/docker.sock` so the provider can launch containers.
+///
+/// Set `PIR_PROVIDER_IMAGE` (repo:tag) to run the re-zerve fork instead of
+/// stock `ghcr.io/akash-network/provider:latest`.
+#[cfg(feature = "akash")]
+fn pir_provider_repo() -> String {
+    match std::env::var("PIR_PROVIDER_IMAGE") {
+        Ok(img) if !img.is_empty() => match img.rsplit_once(':') {
+            Some((repo, _)) => repo.to_string(),
+            None => img,
+        },
+        _ => "ghcr.io/akash-network/provider".into(),
+    }
+}
+
+#[cfg(feature = "akash")]
+fn pir_provider_tag() -> String {
+    match std::env::var("PIR_PROVIDER_IMAGE") {
+        Ok(img) if !img.is_empty() => match img.rsplit_once(':') {
+            Some((_, tag)) => tag.to_string(),
+            None => "latest".into(),
+        },
+        _ => "latest".into(),
+    }
+}
+
 #[cfg(feature = "akash")]
 pub fn akash_provider_config(
     chain_rpc: &str,
@@ -264,8 +292,8 @@ pub fn akash_provider_config(
     SidecarConfig {
         name: "akash-provider".into(),
         image: DockerImage {
-            repository: "ghcr.io/akash-network/provider".into(),
-            version: "latest".into(),
+            repository: pir_provider_repo(),
+            version: pir_provider_tag(),
             uid_gid: None,
         },
         home_dir: "/home/provider".into(),
@@ -282,6 +310,14 @@ pub fn akash_provider_config(
             ("AKASH_GAS".into(), "auto".into()),
             ("AKASH_GAS_ADJUSTMENT".into(), "1.5".into()),
             ("AKASH_GAS_PRICES".into(), "0.025uakt".into()),
+            (
+                "PIR_REQUIRE_COMMIT".into(),
+                std::env::var("PIR_REQUIRE_COMMIT").unwrap_or_default(),
+            ),
+            (
+                "PIR_MODE".into(),
+                std::env::var("PIR_MODE").unwrap_or_default(),
+            ),
         ],
         cmd: vec![
             "provider-services".into(),
@@ -301,6 +337,90 @@ pub fn akash_provider_config(
         validator_process: false,
         health_endpoint: Some("/health".into()),
         ready_timeout_secs: 60,
+        volumes: vec![crate::runtime::VolumeMount {
+            source: "/var/run/docker.sock".into(),
+            target: "/var/run/docker.sock".into(),
+            read_only: false,
+        }],
+    }
+}
+
+/// Sidecar for the re-zerve fork: keep-alive `pir sidecar` plus docker.sock so
+/// `pir serve` can spawn lightweight lease containers on the host daemon.
+///
+/// Forwards `PIR_COMMIT_MATCH_URL` (cw-pir-commit `{matches:true}`) and optional
+/// ChaCha envelope path. Default image is `akash-provider-pir:local`.
+/// Override with `PIR_PROVIDER_IMAGE`.
+#[cfg(feature = "akash")]
+pub fn pir_provider_sidecar_config() -> SidecarConfig {
+    let (repository, version) = match std::env::var("PIR_PROVIDER_IMAGE") {
+        Ok(img) if !img.is_empty() => match img.rsplit_once(':') {
+            Some((repo, tag)) => (repo.to_string(), tag.to_string()),
+            None => (img, "latest".into()),
+        },
+        _ => ("akash-provider-pir".into(), "local".into()),
+    };
+    let serve_image = std::env::var("PIR_SERVE_IMAGE")
+        .unwrap_or_else(|_| "python:3.12-alpine".into());
+    SidecarConfig {
+        name: "pir-provider".into(),
+        image: DockerImage {
+            repository,
+            version,
+            uid_gid: None,
+        },
+        home_dir: "/tmp/pir".into(),
+        ports: vec!["8444".into()],
+        env: vec![
+            (
+                "PIR_REQUIRE_COMMIT".into(),
+                std::env::var("PIR_REQUIRE_COMMIT").unwrap_or_else(|_| "1".into()),
+            ),
+            (
+                "PIR_MODE".into(),
+                std::env::var("PIR_MODE").unwrap_or_default(),
+            ),
+            (
+                "PIR_ASK_COMMIT".into(),
+                std::env::var("PIR_ASK_COMMIT").unwrap_or_default(),
+            ),
+            (
+                "PIR_BID_COMMIT".into(),
+                std::env::var("PIR_BID_COMMIT").unwrap_or_default(),
+            ),
+            (
+                "PIR_COMMIT_MATCH_URL".into(),
+                std::env::var("PIR_COMMIT_MATCH_URL").unwrap_or_default(),
+            ),
+            (
+                "PIR_BID_ENVELOPE_FILE".into(),
+                std::env::var("PIR_BID_ENVELOPE_FILE").unwrap_or_default(),
+            ),
+            (
+                "PIR_REQUIRE_ENVELOPE".into(),
+                std::env::var("PIR_REQUIRE_ENVELOPE").unwrap_or_default(),
+            ),
+            (
+                "PIR_SESSION_KEY".into(),
+                std::env::var("PIR_SESSION_KEY").unwrap_or_default(),
+            ),
+            (
+                "PIR_LEASE_BOOK_FILE".into(),
+                "/tmp/pir/leases.json".into(),
+            ),
+            ("PIR_SERVE_IMAGE".into(), serve_image),
+        ],
+        // Image ENTRYPOINT is /usr/bin/provider-services.
+        cmd: vec!["pir".into(), "sidecar".into()],
+        pre_start: false,
+        validator_process: false,
+        health_endpoint: Some("/health".into()),
+        ready_timeout_secs: 30,
+        volumes: vec![crate::runtime::VolumeMount {
+            source: "/var/run/docker.sock".into(),
+            target: "/var/run/docker.sock".into(),
+            read_only: false,
+        }],
     }
 }
 
@@ -352,6 +472,7 @@ pub fn oracle_feeder_config(
         validator_process: false,
         health_endpoint: None,
         ready_timeout_secs: 10,
+        volumes: vec![],
     }
 }
 
@@ -452,5 +573,6 @@ pub fn minio_ipfs_config(
         validator_process: false,
         health_endpoint: Some("/minio/health/live".into()),
         ready_timeout_secs: 30,
+        volumes: vec![],
     }
 }

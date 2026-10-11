@@ -28,12 +28,7 @@ const NORICK_VK: &str = "tests/interchaintest/circuits/no_rick.bin";
 const NORICK_PROOF: &str = "tests/interchaintest/circuits/no_rick_proof.json";
 
 fn zk_image() -> DockerImage {
-    DockerImage {
-        repository: std::env::var("TERP_IMAGE_REPO")
-            .unwrap_or_else(|_| "terpnetwork/terp-core".into()),
-        version: std::env::var("TERP_IMAGE_VERSION").unwrap_or_else(|_| "local-zk".into()),
-        uid_gid: None,
-    }
+    terp_docker_image()
 }
 
 fn terp_chain_config(chain_id: &str) -> ChainConfig {

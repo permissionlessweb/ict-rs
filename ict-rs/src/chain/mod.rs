@@ -10,6 +10,12 @@ pub mod penumbra;
 pub mod terp;
 #[cfg(feature = "zakura")]
 pub mod zakura;
+#[cfg(feature = "zakura")]
+pub mod zcash_devtool;
+#[cfg(feature = "dregg-node")]
+pub mod dregg;
+#[cfg(feature = "bitcoin")]
+pub mod bitcoin;
 
 use std::collections::HashMap;
 
@@ -19,7 +25,7 @@ use serde::{Deserialize, Serialize};
 
 use crate::auth::Authenticator;
 use crate::error::{IctError, Result};
-use crate::runtime::DockerImage;
+use crate::runtime::{DockerImage, VolumeMount};
 use crate::tx::{
     ExecOutput, PacketAcknowledgement, PacketTimeout, TransferOptions, Tx, TxOptions, WalletAmount,
 };
@@ -87,6 +93,9 @@ pub struct SidecarConfig {
     pub health_endpoint: Option<String>,
     /// Seconds to wait for the sidecar to become ready (default: 30).
     pub ready_timeout_secs: u64,
+    /// Bind mounts (e.g. Docker socket so a provider can spawn lease containers).
+    #[serde(default)]
+    pub volumes: Vec<VolumeMount>,
 }
 
 /// Optional in-container faucet configuration.

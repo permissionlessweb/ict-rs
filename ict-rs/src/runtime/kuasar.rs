@@ -44,6 +44,7 @@ mod inner {
     enum SandboxStatus {
         Created,
         Running,
+        Paused,
         Stopped,
     }
 
@@ -165,6 +166,34 @@ mod inner {
             if let Some(sandbox) = state.sandboxes.get_mut(&id.0) {
                 sandbox.status = SandboxStatus::Stopped;
                 info!(sandbox_id = %id.0, "Kuasar: sandbox stopped");
+                Ok(())
+            } else {
+                Err(IctError::Runtime(anyhow::anyhow!(
+                    "sandbox not found: {}",
+                    id.0
+                )))
+            }
+        }
+
+        async fn pause_container(&self, id: &ContainerId) -> Result<()> {
+            let mut state = self.state.lock().unwrap();
+            if let Some(sandbox) = state.sandboxes.get_mut(&id.0) {
+                sandbox.status = SandboxStatus::Paused;
+                info!(sandbox_id = %id.0, "Kuasar: sandbox paused");
+                Ok(())
+            } else {
+                Err(IctError::Runtime(anyhow::anyhow!(
+                    "sandbox not found: {}",
+                    id.0
+                )))
+            }
+        }
+
+        async fn unpause_container(&self, id: &ContainerId) -> Result<()> {
+            let mut state = self.state.lock().unwrap();
+            if let Some(sandbox) = state.sandboxes.get_mut(&id.0) {
+                sandbox.status = SandboxStatus::Running;
+                info!(sandbox_id = %id.0, "Kuasar: sandbox unpaused");
                 Ok(())
             } else {
                 Err(IctError::Runtime(anyhow::anyhow!(

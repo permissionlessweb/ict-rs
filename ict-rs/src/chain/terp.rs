@@ -246,7 +246,7 @@ pub trait TerpVmSuite: Send + Sync {
 /// node running the `zk-wasmvm` module.
 ///
 /// Defaults:
-/// - Image: `terpnetwork/terp-core:local-zk`
+/// - Image: `TERP_IMAGE_REPO`:`TERP_IMAGE_VERSION` (registry.terp.network/terp-core)
 /// - Binary: `terpd`
 /// - Denom: `uterp`
 /// - Chain ID: `terp-local-1`
@@ -256,7 +256,6 @@ pub trait TerpVmSuite: Send + Sync {
 /// Override individual fields after construction as needed.
 pub fn terp_chain_config() -> crate::chain::ChainConfig {
     use crate::chain::{ChainConfig, ChainType, GenesisStyle, SigningAlgorithm};
-    use crate::runtime::DockerImage;
     use serde_json::json;
     use std::collections::HashMap;
 
@@ -301,11 +300,7 @@ pub fn terp_chain_config() -> crate::chain::ChainConfig {
         chain_type: ChainType::Cosmos,
         name: "terp".to_string(),
         chain_id: "terp-local-1".to_string(),
-        images: vec![DockerImage {
-            repository: "terpnetwork/terp-core".to_string(),
-            version: "local-zk".to_string(),
-            uid_gid: None,
-        }],
+        images: vec![crate::image_env::terp_docker_image()],
         bin: "terpd".to_string(),
         bech32_prefix: "terp".to_string(),
         denom: "uterp".to_string(),

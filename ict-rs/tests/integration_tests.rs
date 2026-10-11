@@ -95,9 +95,12 @@ fn mock_exec_response(cmd: &[&str]) -> ExecOutput {
 
     // ---- shell utilities ----
     if parts.first() == Some(&"cat") {
-        // Reading genesis.json or any file — return minimal valid genesis JSON.
+        // Reading genesis.json or any file — return genesis JSON shaped like the
+        // lib mock: auth accounts, uterp staking, and 2 gentxs (the shared
+        // genesis pipeline requires gen_txs >= num_validators; mock tests use
+        // at most 2 validators).
         return ExecOutput {
-            stdout: br#"{"app_state":{}}"#.to_vec(),
+            stdout: br#"{"app_state":{"auth":{"accounts":[{"@type":"/cosmos.auth.v1beta1.BaseAccount","address":"cosmos1mockaddrvalidator","pub_key":null,"account_number":"0","sequence":"0"}]},"staking":{"params":{"bond_denom":"uterp"}},"mint":{"params":{"mint_denom":"uterp"}},"genutil":{"gen_txs":[{"body":{"messages":[{"@type":"/cosmos.staking.v1beta1.MsgCreateValidator"}]}},{"body":{"messages":[{"@type":"/cosmos.staking.v1beta1.MsgCreateValidator"}]}}]}},"chain_id":"mock-chain","genesis_time":"2024-01-01T00:00:00Z"}"#.to_vec(),
             stderr: Vec::new(),
             exit_code: 0,
         };
@@ -105,6 +108,18 @@ fn mock_exec_response(cmd: &[&str]) -> ExecOutput {
     if parts.first() == Some(&"sh") {
         // Shell commands (sed, echo, piped key creation, etc.) — parse inner command.
         let joined = parts.join(" ");
+        // Multi-validator gentx collection (`ls <home>/config/gentx/*.json`):
+        // report one mock file so copy_gentxs_to_primary finds it (mirrors the
+        // lib mock; the follow-up `cat` is served by the cat arm above).
+        if joined.contains("ls") && joined.contains("gentx") {
+            if let Some(tok) = joined.split_whitespace().find(|t| t.contains("gentx")) {
+                return ExecOutput {
+                    stdout: tok.replace("*.json", "gentx-mock.json").into_bytes(),
+                    stderr: Vec::new(),
+                    exit_code: 0,
+                };
+            }
+        }
         if joined.contains("keys add") && joined.contains("--recover") {
             return ExecOutput {
                 stdout:

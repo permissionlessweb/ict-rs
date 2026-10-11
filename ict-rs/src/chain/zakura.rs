@@ -4,7 +4,7 @@
 //!
 //! Hardcoded corridor defaults match Private Bridge D6 / Option D egress:
 //! - JSON-RPC host port **18232**
-//! - miner / demo dest `tmJymvcUCn1ctbghvTJpXBwHiMEB8P6wxNV`
+//! - miner / demo dest `tmLPctKo9j49rtCSKpwEBpLBeykiTGomGQs`
 //! - binding domain `terp-dest-binding-v0`
 //!
 //! Spawn mounts a host-built `zakurad` binary (`ZAKURAD_BIN` or config) into
@@ -42,17 +42,23 @@ pub const ZAKURA_METRICS_PORT: u16 = 19901;
 pub const DEST_BINDING_DOMAIN: &str = "terp-dest-binding-v0";
 
 /// Regtest transparent miner address (node-corridor.toml).
-pub const REGTEST_MINER_DEST: &str = "tmJymvcUCn1ctbghvTJpXBwHiMEB8P6wxNV";
+pub const REGTEST_MINER_DEST: &str = "tmLPctKo9j49rtCSKpwEBpLBeykiTGomGQs";
 
 /// Primary golden owner_binding for [`REGTEST_MINER_DEST`].
 pub const REGTEST_MINER_OWNER_BINDING_HEX: &str =
-    "8b5cac11e39905d56126a0c538b84ff8daa379d8009d4e8b121112479607f09b";
+    "8385e7048941893ade27cf16f1d4cd9095c5f709b4b42a6a21ce076cbee0dc27";
 
 /// Env var for host-built Linux-compatible `zakurad`.
 pub const ENV_ZAKURAD_BIN: &str = "ZAKURAD_BIN";
 
 /// Env var override for RPC base URL (default `http://127.0.0.1:18232`).
 pub const ENV_ZAKURA_RPC: &str = "ZAKURA_RPC";
+
+/// Fail-closed lab gate for Crosslink Docker e2e (`ZAKURA_CROSSLINK_LAB=1`).
+///
+/// CX0/CX1 unit checks may skip when the Linux binary is missing. CX4/CX5
+/// (and this env) must panic, not `eprintln!("skip")`.
+pub const ENV_ZAKURA_CROSSLINK_LAB: &str = "ZAKURA_CROSSLINK_LAB";
 
 /// Container image used to run the bind-mounted binary (no in-image compile).
 pub const ZAKURA_BASE_IMAGE_REPO: &str = "debian";
@@ -176,6 +182,34 @@ impl ZakuraNode {
         rpc_ready(&self.rpc_url).await
     }
 
+    /// Docker DNS JSON-RPC as seen by sibling containers (DREGG tip probe).
+    pub fn docker_dns_rpc_url(&self) -> String {
+        format!(
+            "http://zakura-{}:{}",
+            sanitize_name(&self.config.test_name),
+            self.config.rpc_container_port
+        )
+    }
+
+    /// Stop the container without removing it (lab: house node offline).
+    pub async fn stop(&self) -> Result<()> {
+        let id = self.container_id.as_ref().ok_or_else(|| {
+            IctError::Config(
+                "zakura container not started (reused host RPC cannot be stopped)".into(),
+            )
+        })?;
+        self.runtime.stop_container(id).await
+    }
+
+    /// Start a previously stopped container and wait for RPC.
+    pub async fn start(&self) -> Result<()> {
+        let id = self.container_id.as_ref().ok_or_else(|| {
+            IctError::Config("zakura container not started".into())
+        })?;
+        self.runtime.start_container(id).await?;
+        wait_rpc_ready(&self.rpc_url, self.config.ready_timeout_secs).await
+    }
+
     /// Stop and remove the container if we created one.
     pub async fn teardown(&mut self) -> Result<()> {
         if self.reused_existing {
@@ -192,6 +226,17 @@ impl ZakuraNode {
 }
 
 // ── Public API ─────────────────────────────────────────────────────────────
+
+/// True if `path` is an ELF object (Linux). Mach-O must not be bind-mounted
+/// into `debian:trixie-slim`.
+pub fn zakurad_is_linux_elf(path: &Path) -> bool {
+    use std::io::Read;
+    let mut magic = [0u8; 4];
+    match std::fs::File::open(path).and_then(|mut f| f.read_exact(&mut magic)) {
+        Ok(()) => magic == [0x7f, b'E', b'L', b'F'],
+        Err(_) => false,
+    }
+}
 
 /// Resolve `zakurad` path: `ZAKURAD_BIN` else error with install hint.
 pub fn resolve_zakurad_bin() -> Result<PathBuf> {
@@ -229,6 +274,22 @@ p2p_stack = "legacy"
 cache_dir = false
 initial_testnet_peers = []
 max_connections_per_ip = 4
+
+[network.testnet_parameters.activation_heights]
+NU5 = 1
+NU6 = 1
+"NU6.1" = 2
+"NU6.2" = 2
+"NU6.3" = 2
+
+# Height 1 (NU6) funds the lockbox; height 2 (NU6.1 + Ironwood) disburses it.
+[[network.testnet_parameters.funding_streams]]
+height_range = {{ start = 1, end = 2 }}
+recipients = [{{ receiver = "Deferred", numerator = 1 }}]
+
+[[network.testnet_parameters.lockbox_disbursements]]
+address = "t2RnBRiqrN1nW4ecZs1Fj3WWjNdnSs4kiX8"
+amount = 6250000
 
 [state]
 ephemeral = true
@@ -279,6 +340,7 @@ pub fn zakura_sidecar_config() -> SidecarConfig {
         validator_process: false,
         health_endpoint: None,
         ready_timeout_secs: 60,
+        volumes: vec![],
     }
 }
 
@@ -310,6 +372,14 @@ pub async fn spawn_zakura_local(
     if !config.zakurad_bin.is_file() {
         return Err(IctError::Config(format!(
             "zakurad binary not found at {:?} (set {ENV_ZAKURAD_BIN})",
+            config.zakurad_bin
+        )));
+    }
+
+    if !zakurad_is_linux_elf(&config.zakurad_bin) {
+        return Err(IctError::Config(format!(
+            "zakurad at {:?} is not a Linux ELF (never bind-mount a Mach-O binary into debian:trixie-slim); \
+             set {ENV_ZAKURAD_BIN} to an aarch64/x86_64 Linux build (groot cache or cross)",
             config.zakurad_bin
         )));
     }
@@ -477,6 +547,13 @@ mod tests {
     use super::*;
 
     #[test]
+    fn regtest_miner_dest_is_the_sk1_p2pkh() {
+        // secp256k1 secret 1, compressed, Zcash regtest/testnet P2PKH.
+        // The Ironwood open spends this coinbase. A different string is InvalidAddress.
+        assert_eq!(REGTEST_MINER_DEST, "tmLPctKo9j49rtCSKpwEBpLBeykiTGomGQs");
+    }
+
+    #[test]
     fn owner_binding_matches_golden_primary() {
         let h = owner_binding_from_dest_display(REGTEST_MINER_DEST);
         assert_eq!(h, REGTEST_MINER_OWNER_BINDING_HEX);
@@ -495,6 +572,10 @@ mod tests {
         assert!(t.contains(&format!("0.0.0.0:{ZAKURA_RPC_PORT}")));
         assert!(t.contains(REGTEST_MINER_DEST));
         assert!(t.contains("Regtest"));
+        assert!(
+            !t.contains("[crosslink]"),
+            "CX0 stock corridor TOML must not grow a [crosslink] section"
+        );
     }
 
     #[test]
@@ -503,6 +584,30 @@ mod tests {
         assert_eq!(s.name, "zakura");
         assert!(s.ports.iter().any(|p| p == &ZAKURA_RPC_PORT.to_string()));
         assert!(s.cmd.iter().any(|c| c.contains("zakurad")));
+    }
+
+    #[test]
+    fn linux_elf_magic_rejects_non_elf() {
+        let dir = tempfile::tempdir().unwrap();
+        let p = dir.path().join("not-elf");
+        std::fs::write(&p, b"not an elf").unwrap();
+        assert!(!zakurad_is_linux_elf(&p));
+        let elf = dir.path().join("fake-elf");
+        std::fs::write(&elf, b"\x7fELF rest").unwrap();
+        assert!(zakurad_is_linux_elf(&elf));
+    }
+
+    #[test]
+    fn docker_dns_uses_hostname_and_container_port() {
+        let mut c = ZakuraNodeConfig::default();
+        c.test_name = "svg-mint-zakura".into();
+        c.rpc_container_port = 18232;
+        let host = format!("zakura-{}", sanitize_name(&c.test_name));
+        assert_eq!(host, "zakura-svg-mint-zakura");
+        assert_eq!(
+            format!("http://{host}:{}", c.rpc_container_port),
+            "http://zakura-svg-mint-zakura:18232"
+        );
     }
 
     #[test]
@@ -517,6 +622,23 @@ mod tests {
         assert!(url.contains("18232") || std::env::var(ENV_ZAKURA_RPC).is_ok());
         let _ = url;
         assert_eq!(cfg.rpc_host_port, ZAKURA_RPC_PORT);
+    }
+
+    #[tokio::test]
+    async fn spawn_rejects_non_linux_elf() {
+        let rt = crate::runtime::mock::MockRuntime::new();
+        let dir = tempfile::tempdir().unwrap();
+        let p = dir.path().join("zakurad");
+        std::fs::write(&p, b"not-an-elf").unwrap();
+        let mut cfg = ZakuraNodeConfig::default();
+        cfg.reuse_if_ready = false;
+        cfg.zakurad_bin = p;
+        let err = spawn_zakura_local(Arc::new(rt), cfg).await.unwrap_err();
+        let msg = err.to_string();
+        assert!(
+            msg.contains("ELF") || msg.contains("Mach-O"),
+            "unexpected: {msg}"
+        );
     }
 
     #[tokio::test]

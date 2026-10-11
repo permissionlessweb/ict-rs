@@ -24,15 +24,7 @@ use ict_rs::prelude::*;
 
 /// Docker image to use. Override with TERP_IMAGE_REPO / TERP_IMAGE_VERSION env vars.
 fn terp_image() -> DockerImage {
-    let repo = std::env::var("TERP_IMAGE_REPO")
-        .unwrap_or_else(|_| "registry.terp.network/terp-core".to_string());
-    let version = std::env::var("TERP_IMAGE_VERSION")
-        .unwrap_or_else(|_| "local".to_string());
-    DockerImage {
-        repository: repo,
-        version,
-        uid_gid: None,
-    }
+    terp_docker_image()
 }
 
 /// Snapshot interval in blocks. The chain will take a snapshot every this many blocks.

@@ -142,9 +142,13 @@ pub fn builtin_chain_config(name: &str) -> Result<ChainConfig> {
             chain_type: ChainType::Cosmos,
             name: "terp".to_string(),
             chain_id: "terp-test-1".to_string(),
-            images: vec![DockerImage {
-                repository: "registry.terp.network/terp-core".to_string(),
-                version: "local-zk".to_string(),
+            images: vec![crate::runtime::DockerImage {
+                repository: crate::image_env::terp_image_repo(),
+                version: std::env::var("TERP_IMAGE_VERSION")
+                    .or_else(|_| std::env::var("ICT_IMAGE_VERSION"))
+                    .ok()
+                    .filter(|s| !s.is_empty() && s != "local" && s != "local-zk")
+                    .unwrap_or_else(|| "unset".to_string()),
                 uid_gid: None,
             }],
             bin: "terpd".to_string(),

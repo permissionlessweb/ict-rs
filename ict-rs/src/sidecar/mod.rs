@@ -134,7 +134,7 @@ impl SidecarProcess {
             cmd: self.config.cmd.clone(),
             entrypoint: None,
             ports,
-            volumes: Vec::new(),
+            volumes: self.config.volumes.clone(),
             labels: vec![
                 ("ict.test".to_string(), self.test_name.clone()),
                 ("ict.chain_id".to_string(), self.chain_id.clone()),

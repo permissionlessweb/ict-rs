@@ -209,7 +209,9 @@ terp_b.chain_id = "terp-b-1".into();
 | `basic_cosmos` | Single chain lifecycle (mock) | `cargo run --example basic_cosmos` |
 | `ibc_transfer` | IBC transfer (mock) | `cargo run --example ibc_transfer` |
 | `ibc_transfer_e2e` | IBC transfer (Docker) | `cargo run --example ibc_transfer_e2e --features docker` |
+| `hasher_ibc_bench` | Hasher IBC H vs F RecvPacket JSON (Docker) | `HASHER_VARIANT=H TERP_IMAGE_VERSION=… cargo run -p ict-rs --example hasher_ibc_bench --features docker,testing,terp` |
 | `polytone` | Cross-chain CosmWasm (Docker) | `cargo run --example polytone --features docker` |
+| `polytone_any_norick` | Polytone `CosmosMsg::Any` → zk_no_rick prove (Docker, zk image) | `cargo run --example polytone_any_norick --features docker` |
 | `cosmos_upgrade` | Chain upgrade (Docker) | `cargo run --example cosmos_upgrade --features docker` |
 | `hashmerchant` | Hashmerchant module (Docker) | `cargo run --example hashmerchant --features docker,ethereum,hashmerchant` |
 | `no_rick` | NFT minting (Docker) | `cargo run --example no_rick --features docker` |

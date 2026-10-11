@@ -283,6 +283,15 @@ fn mock_command_response(cmd: &[&str]) -> String {
     // that pipe stdin through shell wrappers.
     if cmd.len() >= 3 && cmd[0] == "sh" && cmd[1] == "-c" {
         let inner = cmd[2];
+        // `ls -1 <home>/config/gentx/*.json` (multi-validator gentx collection):
+        // report one mock file so copy_gentxs_to_primary finds it. The follow-up
+        // `cat` is served by the generic cat arm; the write is a mock no-op.
+        let trimmed = inner.trim_start();
+        if trimmed.starts_with("ls ") && trimmed.contains("gentx") {
+            if let Some(tok) = trimmed.split_whitespace().find(|t| t.contains("gentx")) {
+                return tok.replace("*.json", "gentx-mock.json");
+            }
+        }
         // Strip leading pipe commands (e.g., "yes | ", "echo 'mnemonic' | ")
         let inner = if let Some(pos) = inner.find('|') {
             inner[pos + 1..].trim()
@@ -306,6 +315,11 @@ fn mock_command_response(cmd: &[&str]) -> String {
 
     // Match on command patterns
     match parts.as_slice() {
+        // `hermes keys add` MUST precede the generic `keys add` arm below:
+        // parse_key_address_from_output takes the address between ( and ).
+        ["hermes", "keys", "add", ..] => {
+            "SUCCESS Added key (cosmos1mockhermes123456789)".to_string()
+        }
         // `gaiad status` → CometBFT status JSON
         [_, "status", ..] => r#"{"sync_info":{"latest_block_height":"42","latest_block_time":"2024-01-01T00:00:00Z","catching_up":false},"node_info":{"network":"mock-chain"}}"#.to_string(),
 
@@ -350,6 +364,38 @@ fn mock_command_response(cmd: &[&str]) -> String {
             r#"{"height":"1","txhash":"MOCKIBCTX00000000000000000000000000000000000000000000000000000000","gas_used":"80000","code":0,"packet_sequence":"1"}"#.to_string()
         }
 
+        // `terpd query ibc client self-consensus-state`
+        [_, "query", "ibc", "client", "self-consensus-state", ..]
+        | ["query", "ibc", "client", "self-consensus-state", ..] => {
+            r#"{"@type":"/ibc.lightclients.tendermint.v1.ConsensusState","timestamp":"2024-01-01T00:00:00Z","root":{"hash":"AAAAAAAAAAA="},"next_validators_hash":"AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA="}"#.to_string()
+        }
+
+        // `terpd tx ibc client create <cs> <cons>`
+        [_, "tx", "ibc", "client", "create", ..] | ["tx", "ibc", "client", "create", ..] => {
+            r#"{"height":"1","txhash":"MOCKIBCV2CREATE0000000000000000000000000000000000000000000000000","gas_used":"80000","code":0,"logs":[{"events":[{"type":"create_client","attributes":[{"key":"client_id","value":"07-tendermint-0"}]}]}]}"#.to_string()
+        }
+
+        // `terpd tx ibc client add-counterparty`
+        [_, "tx", "ibc", "client", "add-counterparty", ..]
+        | ["tx", "ibc", "client", "add-counterparty", ..] => {
+            r#"{"height":"1","txhash":"MOCKIBCV2CP00000000000000000000000000000000000000000000000000000","gas_used":"80000","code":0}"#.to_string()
+        }
+
+        // `terpd tx ibc-wasm store-code <wasm>`
+        [_, "tx", "ibc-wasm", "store-code", ..] | ["tx", "ibc-wasm", "store-code", ..] => {
+            r#"{"height":"1","txhash":"MOCKIBCWASMSTORE000000000000000000000000000000000000000000000000","gas_used":"200000","code":0,"logs":[{"events":[{"type":"submit_proposal","attributes":[{"key":"proposal_id","value":"1"}]}]}]}"#.to_string()
+        }
+
+        // `terpd query ibc-wasm checksums`
+        [_, "query", "ibc-wasm", "checksums", ..] | ["query", "ibc-wasm", "checksums", ..] => {
+            r#"{"checksums":["33d506ee481a06a14668bc5f79cc0a1363cf1f3bcc214e82deaf2a69b11f7d33"]}"#.to_string()
+        }
+
+        // `terpd query tx <hash>` — used by IbcWasmExt::proposal_id_from_tx
+        [_, "query", "tx", ..] | ["query", "tx", ..] => {
+            r#"{"height":"1","txhash":"MOCKIBCWASMSTORE000000000000000000000000000000000000000000000000","code":0,"logs":[{"events":[{"type":"submit_proposal","attributes":[{"key":"proposal_id","value":"1"}]}]}]}"#.to_string()
+        }
+
         // `terpd tx wasm store <path>` → store code response
         [_, "tx", "wasm", "store", ..] | ["tx", "wasm", "store", ..] => {
             r#"{"code_id":"1","txhash":"MOCKWASMSTORE00000000000000000000000000000000000000000000000000","gas_used":"200000","code":0}"#.to_string()
@@ -375,6 +421,25 @@ fn mock_command_response(cmd: &[&str]) -> String {
         // `terpd query wasm code-info <code_id>` → code info response
         [_, "query", "wasm", "code-info", ..] | ["query", "wasm", "code-info", ..] => {
             r#"{"code_id":"1","creator":"terp1mockaddrvalidator","data_hash":"ABCDEF","instantiate_permission":{"permission":"Everybody"}}"#.to_string()
+        }
+
+        // `terpd tx wasm pay-circuit-deposit <years>`
+        [_, "tx", "wasm", "pay-circuit-deposit", years, ..] | ["tx", "wasm", "pay-circuit-deposit", years, ..] => {
+            format!(
+                r#"{{"height":"1","txhash":"MOCKCIRCUITPAY00000000000000000000000000000000000000000000000000","gas_used":"80000","code":0,"paid_until_unix":"1700000000","years":"{years}"}}"#
+            )
+        }
+
+        // `terpd query wasm circuit-deposit <addr>`
+        [_, "query", "wasm", "circuit-deposit", addr, ..] | ["query", "wasm", "circuit-deposit", addr, ..] => {
+            format!(
+                r#"{{"address":"{addr}","paid_until_unix":"1700000000","covered":true}}"#
+            )
+        }
+
+        // `terpd tx feeshare register-fee-share ...`
+        [_, "tx", "feeshare", "register-fee-share", ..] | ["tx", "feeshare", "register-fee-share", ..] => {
+            r#"{"height":"1","txhash":"MOCKFEESHAREREG000000000000000000000000000000000000000000000000","gas_used":"70000","code":0}"#.to_string()
         }
 
         // Tokenfactory tx create-denom
@@ -409,6 +474,19 @@ fn mock_command_response(cmd: &[&str]) -> String {
         // Tokenfactory query params
         [_, "query", "tokenfactory", "params", ..] | ["query", "tokenfactory", "params", ..] => {
             r#"{"params":{"denom_creation_fee":[{"denom":"uterp","amount":"1000000"}]}}"#.to_string()
+        }
+
+        [_, "query", "drip", "params", ..] | ["query", "drip", "params", ..] => {
+            r#"{"params":{"enable_drip":true,"allowed_addresses":[]}}"#.to_string()
+        }
+        [_, "tx", "drip", "distribute-tokens", ..] | ["tx", "drip", "distribute-tokens", ..] => {
+            r#"{"height":"1","txhash":"MOCKDRIP00000000000000000000000000000000000000000000000000000000","gas_used":"50000","code":0}"#.to_string()
+        }
+        [_, "query", "clock", "params", ..] | ["query", "clock", "params", ..] => {
+            r#"{"params":{"contract_gas_limit":"100000"}}"#.to_string()
+        }
+        [_, "query", "clock", "clock-contracts", ..] | ["query", "clock", "clock-contracts", ..] => {
+            r#"{"clock_contracts":[]}"#.to_string()
         }
 
         // Staking queries
@@ -552,8 +630,11 @@ fn mock_command_response(cmd: &[&str]) -> String {
         }
 
         // `cat` (used for reading genesis files)
+        // NOTE: gen_txs carries 2 entries because the genesis pipeline requires
+        // gen_txs >= num_validators and mock tests use at most 2 validators.
+        // If a mock test needs more, bump this array (error will name the count).
         ["cat", ..] => {
-            r#"{"app_state":{"auth":{"accounts":[{"@type":"/cosmos.auth.v1beta1.BaseAccount","address":"cosmos1mockaddrvalidator","pub_key":null,"account_number":"0","sequence":"0"},{"@type":"/cosmos.auth.v1beta1.BaseAccount","address":"cosmos1mockaddrfaucet","pub_key":null,"account_number":"1","sequence":"0"}]},"staking":{"params":{"bond_denom":"uterp","unbonding_time":"1814400s","max_validators":100}},"mint":{"params":{"mint_denom":"uterp"}},"genutil":{"gen_txs":[{"body":{"messages":[{"@type":"/cosmos.staking.v1beta1.MsgCreateValidator"}]}}]}},"chain_id":"mock-chain","genesis_time":"2024-01-01T00:00:00Z"}"#.to_string()
+            r#"{"app_state":{"auth":{"accounts":[{"@type":"/cosmos.auth.v1beta1.BaseAccount","address":"cosmos1mockaddrvalidator","pub_key":null,"account_number":"0","sequence":"0"},{"@type":"/cosmos.auth.v1beta1.BaseAccount","address":"cosmos1mockaddrfaucet","pub_key":null,"account_number":"1","sequence":"0"}]},"staking":{"params":{"bond_denom":"uterp","unbonding_time":"1814400s","max_validators":100}},"mint":{"params":{"mint_denom":"uterp"}},"genutil":{"gen_txs":[{"body":{"messages":[{"@type":"/cosmos.staking.v1beta1.MsgCreateValidator"}]}},{"body":{"messages":[{"@type":"/cosmos.staking.v1beta1.MsgCreateValidator"}]}}]}},"chain_id":"mock-chain","genesis_time":"2024-01-01T00:00:00Z"}"#.to_string()
         }
 
         // -- Ethereum/Anvil cast commands --
@@ -608,10 +689,15 @@ fn mock_command_response(cmd: &[&str]) -> String {
 
         // Hermes commands
         ["hermes", "--json", "keys", "add", ..] | ["hermes", "keys", "add", ..] => {
-            r#"{"result":{"account":"cosmos1mockhermes123456789"}}"#.to_string()
+            // parse_key_address_from_output takes the address between ( and ).
+            "SUCCESS Added key (cosmos1mockhermes123456789)".to_string()
         }
         ["hermes", "--json", "create", "client", ..] | ["hermes", "create", "client", ..] => {
-            r#"{"result":{"CreateClient":{"client_id":"07-tendermint-0"}}}"#.to_string()
+            if cmd.iter().any(|s| *s == "--wasm-checksum") {
+                r#"{"result":{"CreateClient":{"client_id":"08-wasm-0"}}}"#.to_string()
+            } else {
+                r#"{"result":{"CreateClient":{"client_id":"07-tendermint-0"}}}"#.to_string()
+            }
         }
         ["hermes", "--json", "create", "connection", ..] | ["hermes", "create", "connection", ..] => {
             r#"{"result":{"a_side":{"connection_id":"connection-0"},"b_side":{"connection_id":"connection-0"}}}"#.to_string()

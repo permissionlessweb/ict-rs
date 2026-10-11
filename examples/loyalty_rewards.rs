@@ -732,9 +732,9 @@ async fn run_test(
         chain_id: terp_chain_id.into(),
         images: vec![DockerImage {
             repository: std::env::var("TERP_IMAGE_REPO")
-                .unwrap_or_else(|_| "terpnetwork/terp-core".into()),
+                .unwrap_or_else(|_| "registry.terp.network/terp-core".into()),
             version: std::env::var("TERP_IMAGE_VERSION")
-                .unwrap_or_else(|_| "local-zk".into()),
+                .unwrap_or_else(|_| terp_image_version()),
             uid_gid: None,
         }],
         bin: "terpd".into(),

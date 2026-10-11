@@ -33,8 +33,7 @@ use std::io::Write;
 use ict_rs::prelude::*;
 
 /// Image to use for the test chain.
-const IMAGE_REPO: &str = "ghcr.io/terpnetwork/terp-core";
-const IMAGE_VERSION: &str = "v5.1.6-oline";
+
 
 /// Blocks to produce before snapshotting (accumulates state).
 const BLOCKS_BEFORE_SNAPSHOT: u64 = 5;
@@ -44,11 +43,7 @@ fn terp_snapshot_config() -> ChainConfig {
         chain_type: ChainType::Cosmos,
         name: "terp".to_string(),
         chain_id: "snapshot-ict-1".to_string(),
-        images: vec![DockerImage {
-            repository: IMAGE_REPO.to_string(),
-            version: IMAGE_VERSION.to_string(),
-            uid_gid: None,
-        }],
+        images: vec![terp_docker_image()],
         bin: "terpd".to_string(),
         bech32_prefix: "terp".to_string(),
         denom: "uterp".to_string(),
@@ -332,7 +327,7 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
         .init();
 
     println!("=== Terp Snapshot Extract & Restore Test ===");
-    println!("Image: {}:{}", IMAGE_REPO, IMAGE_VERSION);
+    println!("Image: {}:{}", terp_image_repo(), terp_image_version());
 
     let runtime = IctRuntime::Docker(DockerConfig::default())
         .into_backend()

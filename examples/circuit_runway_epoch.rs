@@ -27,18 +27,12 @@ use ict_rs::prelude::*;
 
 const EPOCH_SECS: &str = "12";
 const NUM_VALIDATORS: usize = 3;
-const UNBOND_AMOUNT: &str = "4000000000000uterp";
+// Matches ict-rs cosmos genesis self-delegation (5_000_000 * 10^6). Partial
+// unbond leaves the validator bonded and they still settle.
+const UNBOND_AMOUNT: &str = "5000000000000uterp";
 
 fn terp_image() -> DockerImage {
-    let repo = std::env::var("TERP_IMAGE_REPO")
-        .unwrap_or_else(|_| "registry.terp.network/terp-core".to_string());
-    let version = std::env::var("TERP_IMAGE_VERSION")
-        .unwrap_or_else(|_| "local-zk".to_string());
-    DockerImage {
-        repository: repo,
-        version,
-        uid_gid: None,
-    }
+    terp_docker_image()
 }
 
 fn terp_config() -> ChainConfig {

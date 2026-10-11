@@ -1,8 +1,25 @@
 [workspace]
-members = ["ict-rs", "ict-rs-codegen", "ict-rs-cw-orch", "ict-rs-derive"]
+members = ["ict-rs", "ict-rs-codegen", "ict-rs-cw-orch", "ict-rs-derive", "pir-live-chain"]
 resolver = "2"
 
 [workspace.package]
 version = "0.1.0"
 edition = "2021"
 rust-version = "1.88"
+
+# rayon 1.12 ParallelIterator is not Iterator; halo2 TheBestReduce needs 1.10.2
+[workspace.dependencies]
+rayon = "=1.10.0"
+
+[patch."https://github.com/permissionlessweb/cw-orchestrator"]
+cw-orch = { path = "../cw-orchestrator/cw-orch" }
+cw-orch-core = { path = "../cw-orchestrator/packages/cw-orch-core" }
+cw-orch-daemon = { path = "../cw-orchestrator/cw-orch-daemon" }
+cw-orch-traits = { path = "../cw-orchestrator/packages/cw-orch-traits" }
+cw-orch-mock = { path = "../cw-orchestrator/packages/cw-orch-mock" }
+cw-orch-networks = { path = "../cw-orchestrator/packages/cw-orch-networks" }
+
+[patch.crates-io]
+cosmwasm-std = { path = "../cosmwasm/packages/std" }
+cosmwasm-schema = { path = "../cosmwasm/packages/schema" }
+cw-storage-plus = { path = "../cw-storage-plus" }

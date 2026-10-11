@@ -49,6 +49,23 @@ impl Default for IbcWasmStoreProposal {
     }
 }
 
+impl IbcWasmStoreProposal {
+    /// `terpd tx ibc-wasm store-code <wasm>` base argv (no gas/from flags).
+    pub fn store_code_tx_base_args(&self) -> Vec<String> {
+        store_code_tx_base_args(&self.wasm_path)
+    }
+}
+
+/// Shipped CLI prefix for 08-wasm store-code. Tests and examples must use this.
+pub fn store_code_tx_base_args(wasm_path: &str) -> Vec<String> {
+    vec![
+        "tx".into(),
+        "ibc-wasm".into(),
+        "store-code".into(),
+        wasm_path.into(),
+    ]
+}
+
 /// Result of a full store-code proposal → vote → pass cycle.
 #[derive(Debug, Clone)]
 pub struct IbcWasmStoreResult {
@@ -87,12 +104,9 @@ pub trait IbcWasmExt: Chain + GovernanceExt {
             opts = opts.flag("--authority", auth);
         }
 
-        let output = self
-            .chain_exec_tx_with(
-                &["tx", "ibc-wasm", "store-code", &prop.wasm_path],
-                opts,
-            )
-            .await?;
+        let base = prop.store_code_tx_base_args();
+        let base_refs: Vec<&str> = base.iter().map(|s| s.as_str()).collect();
+        let output = self.chain_exec_tx_with(&base_refs, opts).await?;
 
         let stdout = output.stdout_str();
         let stderr = output.stderr_str();
@@ -110,29 +124,7 @@ pub trait IbcWasmExt: Chain + GovernanceExt {
         } else {
             stderr.trim().to_string()
         };
-        let v: serde_json::Value = serde_json::from_str(&raw).map_err(|e| {
-            IctError::Config(format!(
-                "ibc-wasm store-code JSON: {e}\nraw={}",
-                trunc(&raw, 500)
-            ))
-        })?;
-
-        if let Some(code) = v["code"].as_u64() {
-            if code != 0 {
-                return Err(IctError::Config(format!(
-                    "ibc-wasm store-code rejected code={code}: {}",
-                    v["raw_log"].as_str().unwrap_or("unknown")
-                )));
-            }
-        }
-
-        let txhash = v["txhash"]
-            .as_str()
-            .unwrap_or_default()
-            .to_string();
-        if txhash.is_empty() {
-            return Err(IctError::Config("ibc-wasm store-code: no txhash".into()));
-        }
+        let txhash = parse_ibc_wasm_store_txhash(&raw)?;
 
         tokio::time::sleep(std::time::Duration::from_secs(3)).await;
 
@@ -194,21 +186,7 @@ pub trait IbcWasmExt: Chain + GovernanceExt {
         if raw.trim().is_empty() {
             return Ok(Vec::new());
         }
-        let v: serde_json::Value = serde_json::from_str(raw.trim())
-            .map_err(|e| IctError::Config(format!("ibc-wasm checksums JSON: {e}")))?;
-
-        let mut out_v = Vec::new();
-        // shapes: { "checksums": ["hex", ...] } or nested
-        if let Some(arr) = v.get("checksums").and_then(|c| c.as_array()) {
-            for item in arr {
-                if let Some(s) = item.as_str() {
-                    out_v.push(s.to_string());
-                } else if let Some(s) = item.get("checksum").and_then(|x| x.as_str()) {
-                    out_v.push(s.to_string());
-                }
-            }
-        }
-        Ok(out_v)
+        parse_ibc_wasm_checksums_json(&raw)
     }
 
     /// Extract proposal_id from a gov submit tx.
@@ -241,6 +219,49 @@ pub trait IbcWasmExt: Chain + GovernanceExt {
 }
 
 impl<T: Chain + ?Sized> IbcWasmExt for T {}
+
+/// Parse `tx ibc-wasm store-code` JSON for txhash (no broadcast).
+pub fn parse_ibc_wasm_store_txhash(raw: &str) -> Result<String> {
+    let v: serde_json::Value = serde_json::from_str(raw.trim()).map_err(|e| {
+        IctError::Config(format!(
+            "ibc-wasm store-code JSON: {e}\nraw={}",
+            trunc(raw, 500)
+        ))
+    })?;
+    if let Some(code) = v["code"].as_u64() {
+        if code != 0 {
+            return Err(IctError::Config(format!(
+                "ibc-wasm store-code rejected code={code}: {}",
+                v["raw_log"].as_str().unwrap_or("unknown")
+            )));
+        }
+    }
+    let txhash = v["txhash"].as_str().unwrap_or_default().to_string();
+    if txhash.is_empty() {
+        return Err(IctError::Config("ibc-wasm store-code: no txhash".into()));
+    }
+    Ok(txhash)
+}
+
+/// Parse `query ibc-wasm checksums` JSON.
+pub fn parse_ibc_wasm_checksums_json(raw: &str) -> Result<Vec<String>> {
+    if raw.trim().is_empty() {
+        return Ok(Vec::new());
+    }
+    let v: serde_json::Value = serde_json::from_str(raw.trim())
+        .map_err(|e| IctError::Config(format!("ibc-wasm checksums JSON: {e}")))?;
+    let mut out_v = Vec::new();
+    if let Some(arr) = v.get("checksums").and_then(|c| c.as_array()) {
+        for item in arr {
+            if let Some(s) = item.as_str() {
+                out_v.push(s.to_string());
+            } else if let Some(s) = item.get("checksum").and_then(|x| x.as_str()) {
+                out_v.push(s.to_string());
+            }
+        }
+    }
+    Ok(out_v)
+}
 
 fn trunc(s: &str, n: usize) -> String {
     let t = s.trim();

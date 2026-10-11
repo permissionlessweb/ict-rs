@@ -19,6 +19,7 @@ All examples are in the `examples/` directory at workspace root.
 | `ibc_hooks` | IBC hooks | — | `cargo run --example ibc_hooks` |
 | `ibc_v2` | IBC v2 protocol | — | `cargo run --example ibc_v2` |
 | `ibc_wasm_lc` | IBC wasm light client | — | `cargo run --example ibc_wasm_lc` |
+| `hasher_ibc_bench` | Hybrid vs full-BLAKE3 IBC RecvPacket metrics (Docker) | `docker,testing,terp` | `HASHER_VARIANT=H TERP_IMAGE_VERSION=… cargo run -p ict-rs --example hasher_ibc_bench --features docker,testing,terp` |
 | `trustless_builder` | Trustless builder | — | `cargo run --example trustless_builder` |
 
 ## Running with Just

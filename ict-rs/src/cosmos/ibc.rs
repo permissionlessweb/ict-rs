@@ -50,6 +50,29 @@ pub struct ChannelOptions {
 pub struct ClientOptions {
     pub trusting_period: Option<String>,
     pub max_clock_drift: Option<String>,
+    /// SHA-256 of 08-wasm bytecode already stored via `tx ibc-wasm store-code`.
+    /// Hermes `create client --wasm-checksum` wraps ICS-07 Tendermint in 08-wasm
+    /// (Informal PR #3943 / #3958 — **not** shipped in Hermes v1.13.x).
+    pub wasm_checksum: Option<String>,
+    /// Chain-id that hosts the 08-wasm client.
+    /// `None` with a checksum means **both** sides (08-wasm ↔ 08-wasm).
+    /// `Some(id)` keeps the other side 07-tendermint.
+    pub wasm_host_chain_id: Option<String>,
+}
+
+impl ClientOptions {
+    /// Checksum to pass as `--wasm-checksum` when creating a client on `host`.
+    pub fn wasm_checksum_for(&self, host_chain_id: &str) -> Option<&str> {
+        let cs = self.wasm_checksum.as_deref()?.trim().trim_start_matches("0x");
+        if cs.is_empty() {
+            return None;
+        }
+        match self.wasm_host_chain_id.as_deref() {
+            None => Some(cs),
+            Some(want) if want == host_chain_id => Some(cs),
+            Some(_) => None,
+        }
+    }
 }
 
 /// IBC channel ordering.

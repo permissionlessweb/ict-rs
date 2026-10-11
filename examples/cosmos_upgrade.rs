@@ -12,19 +12,11 @@
 //! ## Images
 //!
 //! ```sh
-//! # From-image: last v5 release (or whatever ICT_UPGRADE_FROM is)
-//! docker pull registry.terp.network/terp-core:v5.2.0
-//! docker tag  registry.terp.network/terp-core:v5.2.0 terpnetwork/terp-core:v5.2.0
-//!
-//! # To-image: this tree (`make docker-build` / `make local-image`)
-//! cd terp-core && make docker-build
-//! docker tag terpnetwork/terp-core:local terpnetwork/terp-core:local
-//! ```
-//!
-//! ```sh
-//! cargo run --example cosmos_upgrade --features docker
-//! ICT_UPGRADE_FROM=v5.2.0 ICT_UPGRADE_TO=local \
-//!   ICT_UPGRADE_WORKFLOWS=core,ibc,ibc-app \
+//! # From-image and to-image both come from the self-hosted registry.
+//! make docker-ensure-image TAG=v5.2.0 BUILD=0
+//! make docker-ensure-local-zk
+//! ICT_UPGRADE_FROM=v5.2.0 ICT_UPGRADE_TO=local-zk ICT_UPGRADE_NAME=v6.1 \
+//!   ICT_UPGRADE_REPO=registry.terp.network/terp-core \
 //!   cargo run --example cosmos_upgrade --features docker
 //! ```
 //!
@@ -59,7 +51,10 @@ fn upgrade_repo() -> String {
 }
 
 fn upgrade_version() -> String {
-    env_or("ICT_UPGRADE_TO", "local")
+    std::env::var("ICT_UPGRADE_TO")
+        .ok()
+        .filter(|s| !s.is_empty())
+        .unwrap_or_else(terp_image_version)
 }
 
 fn modify_v6_genesis(_cfg: &ChainConfig, raw: Vec<u8>) -> IctResult<Vec<u8>> {

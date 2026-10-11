@@ -41,6 +41,62 @@ struct PathChainConfig {
     channel_id: String,
 }
 
+/// Hermes `update client` argv (07-tendermint and 08-wasm share this CLI).
+pub fn hermes_update_client_cmd(host_chain: &str, client_id: &str) -> Vec<String> {
+    vec![
+        "hermes".to_string(),
+        "--json".to_string(),
+        "update".to_string(),
+        "client".to_string(),
+        "--host-chain".to_string(),
+        host_chain.to_string(),
+        "--client".to_string(),
+        client_id.to_string(),
+    ]
+}
+
+/// Hermes `create client` argv (07-tendermint).
+pub fn hermes_create_client_cmd(host_chain: &str, reference_chain: &str) -> Vec<String> {
+    hermes_create_client_maybe_wasm(host_chain, reference_chain, None)
+}
+
+/// Hermes `create client --wasm-checksum` (08-wasm wrapping ICS-07 Tendermint).
+///
+/// Requires a Hermes build with Informal PR #3943 / #3958 (`romac/wasm-client`).
+/// Stock `ghcr.io/informalsystems/hermes:1.13.x` rejects this flag.
+pub fn hermes_create_wasm_client_cmd(
+    host_chain: &str,
+    reference_chain: &str,
+    wasm_checksum: &str,
+) -> Vec<String> {
+    hermes_create_client_maybe_wasm(host_chain, reference_chain, Some(wasm_checksum))
+}
+
+fn hermes_create_client_maybe_wasm(
+    host_chain: &str,
+    reference_chain: &str,
+    wasm_checksum: Option<&str>,
+) -> Vec<String> {
+    let mut cmd = vec![
+        "hermes".to_string(),
+        "--json".to_string(),
+        "create".to_string(),
+        "client".to_string(),
+        "--host-chain".to_string(),
+        host_chain.to_string(),
+        "--reference-chain".to_string(),
+        reference_chain.to_string(),
+    ];
+    if let Some(cs) = wasm_checksum {
+        let cs = cs.trim().trim_start_matches("0x");
+        if !cs.is_empty() {
+            cmd.push("--wasm-checksum".to_string());
+            cmd.push(cs.to_string());
+        }
+    }
+    cmd
+}
+
 /// A Hermes chain config that will be serialized into the TOML config file.
 /// Matches Go interchaintest's `hermes_config.go` Chain struct.
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -461,7 +517,7 @@ impl Relayer for HermesRelayer {
         Ok(())
     }
 
-    async fn create_clients(&self, path_name: &str, _opts: &ClientOptions) -> Result<()> {
+    async fn create_clients(&self, path_name: &str, opts: &ClientOptions) -> Result<()> {
         let (chain_a, chain_b) = {
             let paths = self.paths.lock().unwrap();
             let path = paths.get(path_name).ok_or_else(|| {
@@ -473,18 +529,12 @@ impl Relayer for HermesRelayer {
             (path.chain_a.chain_id.clone(), path.chain_b.chain_id.clone())
         };
 
+        let wasm_a = opts.wasm_checksum_for(&chain_a);
+        let wasm_b = opts.wasm_checksum_for(&chain_b);
+
         // Create client on chain_a for chain_b
-        let cmd_a = vec![
-            "hermes".to_string(),
-            "--json".to_string(),
-            "create".to_string(),
-            "client".to_string(),
-            "--host-chain".to_string(),
-            chain_a.clone(),
-            "--reference-chain".to_string(),
-            chain_b.clone(),
-        ];
-        info!(relayer = "hermes", path = %path_name, host = %chain_a, ref_chain = %chain_b, "Creating client A→B");
+        let cmd_a = hermes_create_client_maybe_wasm(&chain_a, &chain_b, wasm_a);
+        info!(relayer = "hermes", path = %path_name, host = %chain_a, ref_chain = %chain_b, wasm = wasm_a.is_some(), "Creating client A→B");
         let output_a = self.docker_relayer.exec_oneoff(&cmd_a, &[]).await?;
         let stdout_a = output_a.stdout_str();
         debug!(
@@ -494,28 +544,24 @@ impl Relayer for HermesRelayer {
             exit_code = output_a.exit_code,
             "create client A→B output"
         );
+        reject_missing_wasm_checksum(&output_a, wasm_a.is_some())?;
+        hermes_require_ok(&stdout_a, output_a.exit_code, "create client A→B")?;
 
         // Parse client ID using extractJSONResult pattern (matches Go)
-        let client_id_a = parse_client_id_from_stdout(&stdout_a)
-            .map_err(|e| {
-                warn!(relayer = "hermes", error = %e, stdout = %stdout_a, "Failed to parse client_id A→B");
-                e
-            })
-            .unwrap_or_else(|_| "07-tendermint-0".to_string());
+        let client_id_a = parse_client_id_from_stdout(&stdout_a).map_err(|e| {
+            IctError::Relayer {
+                relayer: "hermes".to_string(),
+                source: anyhow::anyhow!(
+                    "create client A→B: {e}; stdout={stdout_a}; stderr={}",
+                    output_a.stderr_str()
+                ),
+            }
+        })?;
         info!(relayer = "hermes", client_id = %client_id_a, "Client A→B created");
 
         // Create client on chain_b for chain_a
-        let cmd_b = vec![
-            "hermes".to_string(),
-            "--json".to_string(),
-            "create".to_string(),
-            "client".to_string(),
-            "--host-chain".to_string(),
-            chain_b.clone(),
-            "--reference-chain".to_string(),
-            chain_a.clone(),
-        ];
-        info!(relayer = "hermes", path = %path_name, host = %chain_b, ref_chain = %chain_a, "Creating client B→A");
+        let cmd_b = hermes_create_client_maybe_wasm(&chain_b, &chain_a, wasm_b);
+        info!(relayer = "hermes", path = %path_name, host = %chain_b, ref_chain = %chain_a, wasm = wasm_b.is_some(), "Creating client B→A");
         let output_b = self.docker_relayer.exec_oneoff(&cmd_b, &[]).await?;
         let stdout_b = output_b.stdout_str();
         debug!(
@@ -525,13 +571,18 @@ impl Relayer for HermesRelayer {
             exit_code = output_b.exit_code,
             "create client B→A output"
         );
+        reject_missing_wasm_checksum(&output_b, wasm_b.is_some())?;
+        hermes_require_ok(&stdout_b, output_b.exit_code, "create client B→A")?;
 
-        let client_id_b = parse_client_id_from_stdout(&stdout_b)
-            .map_err(|e| {
-                warn!(relayer = "hermes", error = %e, stdout = %stdout_b, "Failed to parse client_id B→A");
-                e
-            })
-            .unwrap_or_else(|_| "07-tendermint-0".to_string());
+        let client_id_b = parse_client_id_from_stdout(&stdout_b).map_err(|e| {
+            IctError::Relayer {
+                relayer: "hermes".to_string(),
+                source: anyhow::anyhow!(
+                    "create client B→A: {e}; stdout={stdout_b}; stderr={}",
+                    output_b.stderr_str()
+                ),
+            }
+        })?;
         info!(relayer = "hermes", client_id = %client_id_b, "Client B→A created");
 
         // Store client IDs
@@ -561,6 +612,7 @@ impl Relayer for HermesRelayer {
             )
         };
 
+        info!(relayer = "hermes", path = %path_name, a_client = %client_a, b_client = %client_b, "Creating connection");
         let cmd = vec![
             "hermes".to_string(),
             "--json".to_string(),
@@ -573,8 +625,6 @@ impl Relayer for HermesRelayer {
             "--b-client".to_string(),
             client_b,
         ];
-
-        info!(relayer = "hermes", path = %path_name, "Creating connection");
         let output = self.docker_relayer.exec_oneoff(&cmd, &[]).await?;
         let stdout = output.stdout_str();
         debug!(
@@ -584,14 +634,17 @@ impl Relayer for HermesRelayer {
             exit_code = output.exit_code,
             "create connection output"
         );
+        hermes_require_ok(&stdout, output.exit_code, "create connection")?;
 
-        // Parse both a_side and b_side connection IDs (matches Go's GetConnectionIDsFromStdout)
-        let (conn_a, conn_b) = parse_connection_ids_from_stdout(&stdout)
-            .map_err(|e| {
-                warn!(relayer = "hermes", error = %e, stdout = %stdout, "Failed to parse connection IDs");
-                e
-            })
-            .unwrap_or_else(|_| ("connection-0".to_string(), "connection-0".to_string()));
+        let (conn_a, conn_b) = parse_connection_ids_from_stdout(&stdout).map_err(|e| {
+            IctError::Relayer {
+                relayer: "hermes".to_string(),
+                source: anyhow::anyhow!(
+                    "create connection produced no connection ids: {e}; stdout={stdout}; stderr={}",
+                    output.stderr_str()
+                ),
+            }
+        })?;
         info!(relayer = "hermes", conn_a = %conn_a, conn_b = %conn_b, "Connection created");
 
         let mut paths = self.paths.lock().unwrap();
@@ -645,7 +698,7 @@ impl Relayer for HermesRelayer {
             "--b-port".to_string(),
             dst_port.to_string(),
             "--a-connection".to_string(),
-            conn_a,
+            conn_a.clone(),
         ];
 
         if !opts.version.is_empty() {
@@ -653,7 +706,7 @@ impl Relayer for HermesRelayer {
             cmd.push(opts.version.clone());
         }
 
-        info!(relayer = "hermes", path = %path_name, "Creating channel");
+        info!(relayer = "hermes", path = %path_name, a_conn = %conn_a, "Creating channel");
         let output = self.docker_relayer.exec_oneoff(&cmd, &[]).await?;
         let stdout = output.stdout_str();
         debug!(
@@ -663,6 +716,7 @@ impl Relayer for HermesRelayer {
             exit_code = output.exit_code,
             "create channel output"
         );
+        hermes_require_ok(&stdout, output.exit_code, "create channel")?;
 
         // Parse channel IDs — without them the transfer CLI falls through to IBC v2.
         let (ch_a, ch_b) = parse_channel_ids_from_stdout(&stdout).map_err(|e| {
@@ -687,6 +741,19 @@ impl Relayer for HermesRelayer {
         Ok(())
     }
 
+    async fn update_wasm_client(&self, host_chain: &str, client_id: &str) -> Result<()> {
+        let cmd = hermes_update_client_cmd(host_chain, client_id);
+        info!(
+            relayer = "hermes",
+            host = %host_chain,
+            client = %client_id,
+            "Updating wasm/IBC client"
+        );
+        let output = self.docker_relayer.exec_oneoff(&cmd, &[]).await?;
+        hermes_require_ok(&output.stdout_str(), output.exit_code, "update wasm client")?;
+        Ok(())
+    }
+
     async fn update_clients(&self, path_name: &str) -> Result<()> {
         let (chain_a, client_a, chain_b, client_b) = {
             let paths = self.paths.lock().unwrap();
@@ -704,31 +771,13 @@ impl Relayer for HermesRelayer {
             )
         };
 
-        // Update client on chain_a
-        let cmd_a = vec![
-            "hermes".to_string(),
-            "--json".to_string(),
-            "update".to_string(),
-            "client".to_string(),
-            "--host-chain".to_string(),
-            chain_a,
-            "--client".to_string(),
-            client_a,
-        ];
-        self.docker_relayer.exec_oneoff(&cmd_a, &[]).await?;
+        let cmd_a = hermes_update_client_cmd(&chain_a, &client_a);
+        let out_a = self.docker_relayer.exec_oneoff(&cmd_a, &[]).await?;
+        hermes_require_ok(&out_a.stdout_str(), out_a.exit_code, "update client A")?;
 
-        // Update client on chain_b
-        let cmd_b = vec![
-            "hermes".to_string(),
-            "--json".to_string(),
-            "update".to_string(),
-            "client".to_string(),
-            "--host-chain".to_string(),
-            chain_b,
-            "--client".to_string(),
-            client_b,
-        ];
-        self.docker_relayer.exec_oneoff(&cmd_b, &[]).await?;
+        let cmd_b = hermes_update_client_cmd(&chain_b, &client_b);
+        let out_b = self.docker_relayer.exec_oneoff(&cmd_b, &[]).await?;
+        hermes_require_ok(&out_b.stdout_str(), out_b.exit_code, "update client B")?;
 
         Ok(())
     }
@@ -771,10 +820,12 @@ impl Relayer for HermesRelayer {
                 continue;
             }
             info!(relayer = "hermes", %chain, %port, channel = %ch, "clear packets");
+            let op = format!("clear packets {chain}/{port}/{ch}");
             let cmd = vec![
                 "hermes".to_string(),
                 "--config".to_string(),
                 cfg.clone(),
+                "--json".to_string(),
                 "clear".to_string(),
                 "packets".to_string(),
                 "--chain".to_string(),
@@ -792,6 +843,7 @@ impl Relayer for HermesRelayer {
                 exit = out.exit_code,
                 "clear packets output"
             );
+            hermes_require_ok(&out.stdout_str(), out.exit_code, &op)?;
         }
         Ok(())
     }
@@ -846,9 +898,16 @@ impl RelayerCommander for HermesCommander {
     }
 
     fn default_image(&self) -> DockerImage {
+        // Stock Informal 1.13.x cannot create 08-wasm clients. Hasher A→C
+        // pins terpnetwork/hermes:08-wasm (feat/08-wasm, Informal PR #3943).
+        // Override: HERMES_IMAGE_REPO / HERMES_IMAGE_VERSION.
+        let repository = std::env::var("HERMES_IMAGE_REPO")
+            .unwrap_or_else(|_| "ghcr.io/informalsystems/hermes".to_string());
+        let version =
+            std::env::var("HERMES_IMAGE_VERSION").unwrap_or_else(|_| "1.13.1".to_string());
         DockerImage {
-            repository: "ghcr.io/informalsystems/hermes".to_string(),
-            version: "1.13.1".to_string(),
+            repository,
+            version,
             // informal systems hermes 1.13.1 image runs as uid/gid 2000 (user hermes)
             uid_gid: Some("2000:2000".to_string()),
         }
@@ -949,7 +1008,17 @@ impl RelayerCommander for HermesCommander {
     }
 
     fn update_clients_cmd(&self, _path: &str, _home: &str) -> Vec<String> {
+        // Path-scoped updates are issued by HermesRelayer via hermes_update_client_cmd.
         vec!["true".to_string()]
+    }
+
+    fn update_wasm_client_cmd(
+        &self,
+        host_chain: &str,
+        client_id: &str,
+        _home: &str,
+    ) -> Vec<String> {
+        hermes_update_client_cmd(host_chain, client_id)
     }
 
     fn start_cmd(&self, home: &str, _paths: &[&str]) -> Vec<String> {
@@ -1054,6 +1123,64 @@ fn parse_key_address_from_output(stdout: &str) -> Option<String> {
 /// Parse client ID from Hermes JSON output.
 /// Matches Go's `GetClientIDFromStdout()`.
 /// JSON format: `{"result":{"CreateClient":{"client_id":"07-tendermint-0",...}}}`
+/// Hermes `--json` often exits 0 with `"status":"error"`. Treat that as failure.
+/// Scans every JSON line so a later error is not hidden by an earlier `result`.
+pub fn hermes_require_ok(stdout: &str, exit_code: i64, op: &str) -> Result<()> {
+    if exit_code != 0 {
+        return Err(IctError::Relayer {
+            relayer: "hermes".to_string(),
+            source: anyhow::anyhow!("{op} exit {exit_code}: {stdout}"),
+        });
+    }
+    for line in stdout.lines() {
+        let line = line.trim();
+        if !line.starts_with('{') {
+            continue;
+        }
+        let Ok(v) = serde_json::from_str::<serde_json::Value>(line) else {
+            continue;
+        };
+        if v.get("status").and_then(|s| s.as_str()) == Some("error") {
+            let msg = v.get("result").and_then(|r| r.as_str()).unwrap_or(line);
+            return Err(IctError::Relayer {
+                relayer: "hermes".to_string(),
+                source: anyhow::anyhow!("{op}: {msg}"),
+            });
+        }
+    }
+    Ok(())
+}
+
+fn reject_missing_wasm_checksum(output: &ExecOutput, wanted_wasm: bool) -> Result<()> {
+    if !wanted_wasm {
+        return Ok(());
+    }
+    let blob = format!("{}{}", output.stdout_str(), output.stderr_str());
+    let lower = blob.to_ascii_lowercase();
+    if output.exit_code != 0
+        && (lower.contains("wasm-checksum")
+            || lower.contains("unexpected argument")
+            || lower.contains("unrecognized"))
+    {
+        return Err(IctError::Relayer {
+            relayer: "hermes".to_string(),
+            source: anyhow::anyhow!(
+                "Hermes image does not support --wasm-checksum (stock v1.13.x). \
+                 Build ./scripts/ibc-ops/build_hermes.sh (terpnetwork/hermes feat/08-wasm) \
+                 and set HERMES_IMAGE_REPO=terpnetwork/hermes HERMES_IMAGE_VERSION=08-wasm. \
+                 output={blob}"
+            ),
+        });
+    }
+    if output.exit_code != 0 {
+        return Err(IctError::Relayer {
+            relayer: "hermes".to_string(),
+            source: anyhow::anyhow!("hermes create client --wasm-checksum failed: {blob}"),
+        });
+    }
+    Ok(())
+}
+
 fn parse_client_id_from_stdout(stdout: &str) -> std::result::Result<String, String> {
     let line = extract_json_result(stdout)
         .ok_or_else(|| format!("no JSON result line in stdout: {stdout}"))?;
@@ -1152,4 +1279,40 @@ fn parse_hermes_connections(stdout: &str) -> Result<Vec<ConnectionOutput>> {
         }
     }
     Ok(connections)
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn hermes_json_status_error_is_failure_even_on_exit_0() {
+        let stdout = r#"{"status":"error","result":"no channel state for channel-1: null"}"#;
+        let err = hermes_require_ok(stdout, 0, "create channel").unwrap_err();
+        let msg = err.to_string();
+        assert!(msg.contains("no channel state"), "{msg}");
+    }
+
+    #[test]
+    fn hermes_json_later_error_line_is_not_hidden() {
+        let stdout = "\
+{\"status\":\"success\",\"result\":{\"CreateClient\":{\"client_id\":\"08-wasm-1\"}}}\n\
+{\"status\":\"error\",\"result\":\"wasm contract call failed\"}\n";
+        assert!(hermes_require_ok(stdout, 0, "create connection").is_err());
+    }
+
+    #[test]
+    fn hermes_json_success_ok() {
+        let stdout = r#"{"status":"success","result":{"CreateClient":{"client_id":"08-wasm-1"}}}"#;
+        hermes_require_ok(stdout, 0, "create client").unwrap();
+        assert_eq!(
+            parse_client_id_from_stdout(stdout).unwrap(),
+            "08-wasm-1"
+        );
+    }
+
+    #[test]
+    fn hermes_nonzero_exit_is_failure() {
+        assert!(hermes_require_ok("ok", 1, "flush").is_err());
+    }
 }

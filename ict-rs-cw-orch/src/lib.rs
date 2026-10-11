@@ -23,6 +23,7 @@ mod error;
 
 pub use convert::chain_info_from_cosmos;
 pub use error::BridgeError;
+pub mod svg_runtime;
 
 /// O-Line deployment suite — wraps OLineTestEnv, OLineBinary, IctAkashNetwork.
 /// Feature-gated: `oline`.
@@ -34,6 +35,9 @@ use ict_rs::chain::cosmos::CosmosChain;
 use tracing::info;
 
 /// Build a cw-orch `DaemonBuilder` from a running ict-rs `CosmosChain`.
+///
+/// PIR (`private-inference-rent`) live attach is this function on groot once
+/// `ict-rs` is a workspace crate; PIR itself does not path-dep this crate.
 ///
 /// The chain must already be initialized and started (i.e. containers are
 /// running and the gRPC port is mapped to the host).
@@ -69,6 +73,13 @@ pub fn daemon_builder_from_chain(
         grpc = ?chain_info.grpc_urls,
         "Building cw-orch DaemonBuilder from ict-rs chain"
     );
+
+    if chain_info.grpc_urls.iter().any(|u| u.contains("localhost:9090"))
+        && chain.primary_node().ok().and_then(|n| n.host_grpc_port) != Some(9090)
+        && std::env::var("ICT_GRPC_URL").ok().filter(|s| !s.is_empty()).is_none()
+    {
+        return Err(BridgeError::NoGrpcAddress);
+    }
 
     let mut builder = DaemonBuilder::new(chain_info);
     builder.is_test(true);

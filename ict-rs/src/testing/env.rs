@@ -54,23 +54,16 @@ impl TestEnv {
     /// Build a default Terp chain config from environment variables.
     ///
     /// Reads:
-    /// - `ICT_IMAGE_REPO` (default: `terpnetwork/terp-core`)
-    /// - `ICT_IMAGE_VERSION` (default: `local-zk`)
+    /// - `TERP_IMAGE_REPO` / `ICT_IMAGE_REPO` (default: `registry.terp.network/terp-core`)
+    /// - `TERP_IMAGE_VERSION` / `ICT_IMAGE_VERSION` (required for Docker; no `local` tag)
     pub fn terp_config() -> ChainConfig {
-        let repo = std::env::var("ICT_IMAGE_REPO")
-            .unwrap_or_else(|_| "registry.terp.network/terp-core".to_string());
-        let version = std::env::var("ICT_IMAGE_VERSION")
-            .unwrap_or_else(|_| "local-zk".to_string());
+        let img = crate::image_env::terp_docker_image();
 
         ChainConfig {
             chain_type: ChainType::Cosmos,
             name: "terp".to_string(),
             chain_id: "120u-1".to_string(),
-            images: vec![DockerImage {
-                repository: repo,
-                version,
-                uid_gid: None,
-            }],
+            images: vec![img],
             bin: "terpd".to_string(),
             bech32_prefix: "terp".to_string(),
             denom: "uterp".to_string(),
@@ -94,12 +87,12 @@ impl TestEnv {
 
     /// Terp config with localterp faucet enabled.
     ///
-    /// Uses the `terpnetwork/terp-core:localterp` image which includes
+    /// Uses the `registry.terp.network/terp-core:localterp` image which includes
     /// Node.js and `/code/faucet_server.js`.
     pub fn terp_localterp_config() -> ChainConfig {
         let mut cfg = Self::terp_config();
         cfg.images = vec![DockerImage {
-            repository: "terpnetwork/terp-core".into(),
+            repository: "registry.terp.network/terp-core".into(),
             version: "localterp".into(),
             uid_gid: None,
         }];

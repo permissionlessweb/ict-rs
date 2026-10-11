@@ -414,7 +414,9 @@ static_height = 1
     // Same client type as ibc_transfer_e2e (07-tendermint), not 06-solomachine.
     // Create from this chain's self header, then RegisterCounterparty so
     // Ibc2Msg::SendPacket can write a packet commitment (ibc-go v10 channel/v2).
-    let ibc_client = create_ibc_v2_tendermint_path(terp, "minter").await?;
+    let ibc_client = ict_rs::ibc_v2::create_ibc_v2_tendermint_path(terp, "minter")
+        .await
+        .map_err(|e| format!("ibc v2 tendermint path: {e}"))?;
     println!("    ibc-v2 tendermint client {ibc_client} + counterparty ics26-router");
 
     wasm_exec(
@@ -1092,155 +1094,6 @@ fn b64_decode(s: &str) -> Result<Vec<u8>, Box<dyn std::error::Error>> {
         i += 4;
     }
     Ok(out)
-}
-
-async fn create_ibc_v2_tendermint_path(
-    terp: &CosmosChain,
-    from: &str,
-) -> Result<String, Box<dyn std::error::Error>> {
-    let status = terp
-        .chain_exec(&["status", "--output", "json"])
-        .await
-        .map_err(|e| format!("status: {e}"))?;
-    let status_j: serde_json::Value = serde_json::from_str(status.stdout_str().trim())
-        .or_else(|_| serde_json::from_str(status.stderr_str().trim()))
-        .map_err(|e| format!("status json: {e}\n{}", status.stdout_str()))?;
-    let height = status_j
-        .pointer("/SyncInfo/latest_block_height")
-        .or_else(|| status_j.pointer("/sync_info/latest_block_height"))
-        .and_then(|v| v.as_str().or_else(|| v.as_u64().map(|_| "")))
-        .map(|s| s.to_string())
-        .or_else(|| {
-            status_j
-                .pointer("/SyncInfo/latest_block_height")
-                .or_else(|| status_j.pointer("/sync_info/latest_block_height"))
-                .and_then(|v| {
-                    v.as_str()
-                        .map(|s| s.to_string())
-                        .or_else(|| v.as_u64().map(|n| n.to_string()))
-                })
-        })
-        .ok_or_else(|| format!("no latest_block_height in status: {status_j}"))?;
-
-    let cons = terp
-        .chain_exec(&[
-            "query",
-            "ibc",
-            "client",
-            "self-consensus-state",
-            "--output",
-            "json",
-        ])
-        .await
-        .map_err(|e| format!("self-consensus-state: {e}"))?;
-    let mut cons_j: serde_json::Value = serde_json::from_str(cons.stdout_str().trim())
-        .map_err(|e| format!("self-consensus-state json: {e}\n{}", cons.stdout_str()))?;
-    if cons_j.get("@type").is_none() {
-        if let Some(inner) = cons_j.get("consensus_state").cloned() {
-            cons_j = inner;
-        }
-    }
-    if cons_j.get("@type").is_none() {
-        cons_j.as_object_mut().map(|o| {
-            o.insert(
-                "@type".into(),
-                serde_json::Value::String("/ibc.lightclients.tendermint.v1.ConsensusState".into()),
-            )
-        });
-    }
-
-    let client_state = serde_json::json!({
-        "@type": "/ibc.lightclients.tendermint.v1.ClientState",
-        "chain_id": terp.chain_id(),
-        "trust_level": { "numerator": "1", "denominator": "3" },
-        "trusting_period": "80s",
-        "unbonding_period": "120s",
-        "max_clock_drift": "20s",
-        "frozen_height": { "revision_number": "0", "revision_height": "0" },
-        "latest_height": { "revision_number": "1", "revision_height": height },
-        "proof_specs": [
-            {
-                "leaf_spec": {
-                    "hash": "SHA256",
-                    "prehash_key": "NO_HASH",
-                    "prehash_value": "SHA256",
-                    "length": "VAR_PROTO",
-                    "prefix": "AA=="
-                },
-                "inner_spec": {
-                    "child_order": [0, 1],
-                    "child_size": 33,
-                    "min_prefix_length": 4,
-                    "max_prefix_length": 12,
-                    "empty_child": null,
-                    "hash": "SHA256"
-                }
-            },
-            {
-                "leaf_spec": {
-                    "hash": "SHA256",
-                    "prehash_key": "NO_HASH",
-                    "prehash_value": "SHA256",
-                    "length": "VAR_PROTO",
-                    "prefix": "AA=="
-                },
-                "inner_spec": {
-                    "child_order": [0, 1],
-                    "child_size": 32,
-                    "min_prefix_length": 1,
-                    "max_prefix_length": 1,
-                    "empty_child": null,
-                    "hash": "SHA256"
-                }
-            }
-        ],
-        "upgrade_path": ["upgrade", "upgradedIBCState"],
-        "allow_update_after_expiry": false,
-        "allow_update_after_misbehaviour": false
-    });
-
-    let node = terp.primary_node()?;
-    node.write_file(
-        client_state.to_string().as_bytes(),
-        "/tmp/ibc_v2_client_state.json",
-    )
-    .await?;
-    node.write_file(cons_j.to_string().as_bytes(), "/tmp/ibc_v2_cons_state.json")
-        .await?;
-
-    let created = ibc_tx(
-        terp,
-        from,
-        &[
-            "ibc",
-            "client",
-            "create",
-            "/tmp/ibc_v2_client_state.json",
-            "/tmp/ibc_v2_cons_state.json",
-        ],
-    )
-    .await?;
-    let client_id = event_attr(&created, "create_client", "client_id")
-        .or_else(|| event_attr(&created, "message", "client_id"))
-        .ok_or_else(|| format!("no client_id in create client tx: {created}"))?;
-    if !client_id.starts_with("07-tendermint-") {
-        return Err(format!("expected 07-tendermint client, got {client_id}").into());
-    }
-
-    ibc_tx(
-        terp,
-        from,
-        &[
-            "ibc",
-            "client",
-            "add-counterparty",
-            &client_id,
-            "08-wasm-0",
-            "aWJj",
-        ],
-    )
-    .await?;
-    Ok(client_id)
 }
 
 async fn ibc_tx(

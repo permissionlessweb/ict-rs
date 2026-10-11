@@ -1,0 +1,14 @@
+---
+title: Testing
+description: How ict-rs examples and CI run
+---
+
+# Testing
+
+Examples under `crates/ict-rs/examples` are the public contract. They need Docker.
+
+CI notes live in `crates/ict-rs/docs/CI.md` (operator file, not this page). Product rule: a test that does not start a chain is not an ict-rs e2e.
+
+```sh
+cargo test -p ict-rs --features docker
+```

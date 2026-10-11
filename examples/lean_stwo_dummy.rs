@@ -75,7 +75,7 @@ fn live_docker() -> bool {
 }
 
 fn stwo_repo() -> String {
-    env_or("ICT_STWO_REPO", "terpnetwork/terp-core")
+    env_or("ICT_STWO_REPO", "registry.terp.network/terp-core")
 }
 
 fn stwo_version() -> String {

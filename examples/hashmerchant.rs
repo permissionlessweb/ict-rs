@@ -531,11 +531,7 @@ address = "0.0.0.0:{grpc_port}"
         chain_type: ChainType::Cosmos,
         name: "terp".into(),
         chain_id: terp_chain_id.into(),
-        images: vec![DockerImage {
-            repository: "terpnetwork/terp-core".into(),
-            version: "local-zk".into(),
-            uid_gid: None,
-        }],
+        images: vec![terp_docker_image()],
         bin: "terpd".into(),
         bech32_prefix: "terp".into(),
         denom: "uterp".into(),

@@ -17,20 +17,13 @@
 //! ```
 
 use std::collections::HashMap;
+use std::sync::Arc;
 
 use ict_rs::prelude::*;
 
 /// Docker image to use. Override with TERP_IMAGE_REPO and TERP_IMAGE_VERSION env vars.
 fn terp_image() -> DockerImage {
-    let repo = std::env::var("TERP_IMAGE_REPO")
-        .unwrap_or_else(|_| "registry.terp.network/terp-core".to_string());
-    let version = std::env::var("TERP_IMAGE_VERSION")
-        .unwrap_or_else(|_| "local".to_string());
-    DockerImage {
-        repository: repo,
-        version,
-        uid_gid: None,
-    }
+    terp_docker_image()
 }
 
 /// Chain A config (terp-test-1).
@@ -89,6 +82,82 @@ fn chain_b_config() -> ChainConfig {
     }
 }
 
+/// Local mock: same Relayer spawn / path / channel / packet / client-update
+/// wiring as Docker, without live RPC. Balance deltas need a real node.
+async fn run_mock_ibc() -> Result<(), Box<dyn std::error::Error>> {
+    println!("=== IBC Transfer Example (ICT_MOCK=1 Hermes spawn) ===\n");
+    let runtime: Arc<dyn RuntimeBackend> = Arc::new(MockRuntime::new());
+    let test_name = "ibc-transfer-mock";
+    let network_id = format!("ict-{test_name}");
+    runtime.create_network(&network_id).await?;
+
+    let chain_a = CosmosChain::new(chain_a_config(), 1, 0, runtime.clone());
+    let chain_b = CosmosChain::new(chain_b_config(), 1, 0, runtime.clone());
+    let relayer = build_relayer(
+        RelayerType::Hermes,
+        runtime.clone(),
+        test_name,
+        &network_id,
+    )
+    .await?;
+
+    let mut ic = Interchain::new(runtime)
+        .add_chain(Box::new(chain_a))
+        .add_chain(Box::new(chain_b))
+        .add_relayer("hermes", relayer)
+        .add_link(InterchainLink {
+            chain1: "terp-test-1".to_string(),
+            chain2: "terp-test-2".to_string(),
+            relayer: "hermes".to_string(),
+            path: "ibc-path".to_string(),
+        });
+
+    ic.build(InterchainBuildOptions {
+        test_name: test_name.to_string(),
+        ..Default::default()
+    })
+    .await?;
+
+    let rly = ic.get_relayer("hermes").expect("hermes relayer");
+    rly.update_clients("ibc-path").await?;
+    rly.update_wasm_client("terp-test-1", "08-wasm-0").await?;
+
+    let chain_a = ic.get_chain("terp-test-1").unwrap();
+    chain_a.create_key("user-a").await?;
+    let user_a = key_address(chain_a, "user-a").await?;
+    chain_a
+        .send_funds(
+            "validator",
+            &WalletAmount {
+                address: user_a.clone(),
+                denom: "uterp".to_string(),
+                amount: 10_000_000_000,
+            },
+        )
+        .await?;
+    let tx = chain_a
+        .send_ibc_transfer(
+            "channel-0",
+            "user-a",
+            &WalletAmount {
+                address: "cosmos1mockaddruser-b".to_string(),
+                denom: "uterp".to_string(),
+                amount: 1000,
+            },
+            &TransferOptions::default(),
+        )
+        .await?;
+    if tx.tx_hash.is_empty() {
+        return Err("mock ibc transfer produced empty txhash".into());
+    }
+    println!("hermes spawn+link+update_clients+update_wasm_client ok");
+    println!("send_ibc_transfer txhash={}", tx.tx_hash);
+    println!("store-code argv: {:?}", store_code_tx_base_args("/lc.wasm"));
+    ic.close().await?;
+    println!("IBC mock e2e PASSED (no live broadcast)");
+    Ok(())
+}
+
 /// Get a key's bech32 address from a chain via chain_exec.
 async fn key_address(
     chain: &dyn Chain,
@@ -115,6 +184,11 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
                 .unwrap_or_else(|_| "info,ict_rs::relayer=debug".to_string()),
         )
         .init();
+
+    let mock = std::env::var("ICT_MOCK").ok().as_deref() == Some("1");
+    if mock {
+        return run_mock_ibc().await;
+    }
 
     println!("=== IBC Transfer Example (Docker + Hermes) ===\n");
 

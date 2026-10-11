@@ -25,8 +25,7 @@ use std::path::PathBuf;
 use ict_rs::prelude::*;
 
 /// Docker image for the zk-wasmvm enabled chain.
-const ZK_IMAGE_REPO: &str = "registry.terp.network/terp-core";
-const ZK_IMAGE_VERSION: &str = "local-zk";
+
 
 /// Host-side paths to contract and VK files (relative to ZK workspace root).
 const WASM_REL: &str = "terp-core/tests/interchaintest/contracts/zk_no_rick.wasm";
@@ -58,11 +57,7 @@ fn terp_zk_config() -> ChainConfig {
         chain_type: ChainType::Cosmos,
         name: "terp".to_string(),
         chain_id: "120u-1".to_string(),
-        images: vec![DockerImage {
-            repository: ZK_IMAGE_REPO.to_string(),
-            version: ZK_IMAGE_VERSION.to_string(),
-            uid_gid: None,
-        }],
+        images: vec![terp_docker_image()],
         bin: "terpd".to_string(),
         bech32_prefix: "terp".to_string(),
         denom: "uterp".to_string(),
@@ -144,11 +139,19 @@ async fn run_test(chain: &mut CosmosChain) -> Result<(), Box<dyn std::error::Err
     let fund = WalletAmount {
         address: user_addr.clone(),
         denom: "uterp".to_string(),
-        amount: 100_000_000,
+        amount: 5_000_000_000,
     };
     chain.send_funds("validator", &fund).await?;
     wait_for_blocks(chain, 2).await?;
-    println!("Funded user: {}", user_addr);
+    // bank sends are sync-broadcast: a failed DeliverTx is silent. Verify.
+    let bal = chain.get_balance(&user_addr, "uterp").await?;
+    println!("Funded user: {} balance={}uterp", user_addr, bal);
+    if bal < 4_000_000_000 {
+        return Err(format!(
+            "initial funding did not land (balance={}uterp); validator may be illiquid",
+            bal
+        ).into());
+    }
 
     // 3. Copy wasm + VK files into the container
     println!("\n--- Copying contract files into container ---");
@@ -245,18 +248,51 @@ async fn run_test(chain: &mut CosmosChain) -> Result<(), Box<dyn std::error::Err
     println!("store-full-circuit tx accepted: {}", hs_json["txhash"].as_str().unwrap_or("?"));
 
     wait_for_blocks(chain, 2).await?;
+    // store-full-circuit can drain the user (circuit deposit / gas). Top up
+    // before instantiate --amount so we never hit spendable 0uterp.
+    chain.send_funds("validator", &WalletAmount {
+        address: user_addr.clone(),
+        denom: "uterp".to_string(),
+        amount: 500_000_000,
+    }).await?;
+    wait_for_blocks(chain, 2).await?;
+    let bal = chain.get_balance(&user_addr, "uterp").await?;
+    println!("Top-up landed: balance={}uterp", bal);
+    if bal < 100_000_000 {
+        return Err(format!(
+            "top-up did not land (balance={}uterp); cannot cover 10M instantiate",
+            bal
+        ).into());
+    }
 
     // For the first contract upload, code_id is always 1
     let code_id = "1";
     println!("Stored code: {} (first upload)", code_id);
 
     // 5. Instantiate contract
+    // Diagnose signer identity: the funded address must equal `--from default`.
+    println!("\n--- Signer diagnostics ---");
+    let show = chain.chain_exec(&[
+        "keys", "show", "default", "-a", "--keyring-backend", "test",
+    ]).await?;
+    println!("keys show default: {}", show.stdout_str().trim());
+    let bals = chain.chain_exec(&[
+        "query", "bank", "balances", &user_addr, "--output", "json",
+    ]).await?;
+    println!("bank balances {}: {}", user_addr, bals.stdout_str().trim());
+    let acct = chain.chain_exec(&[
+        "query", "auth", "account", &user_addr, "--output", "json",
+    ]).await?;
+    println!("auth account {}: {}", user_addr, acct.stdout_str().trim());
     println!("\n--- Instantiating contract ---");
+    // Fund generously: the contract's instantiate handler emits bank sends
+    // at dispatch time (see keeper "dispatch" wrap); the deposit must cover
+    // all of them, not just one 10M hop.
     let inst_output = chain.chain_exec(&[
         "tx", "wasm", "instantiate", code_id, "{}",
         "--label", "no-rick",
         "--no-admin",
-        "--amount", "10000000uterp",
+        "--amount", "100000000uterp",
         "--from", "default",
         "--gas-prices", "0uterp",
         "--chain-id", "120u-1",
@@ -431,8 +467,8 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
     println!(
         "Chain: {} (image: {}:{})",
         chain.chain_id(),
-        ZK_IMAGE_REPO,
-        ZK_IMAGE_VERSION
+        terp_image_repo(),
+        terp_image_version()
     );
 
     // Run test, then ALWAYS clean up — even on error.

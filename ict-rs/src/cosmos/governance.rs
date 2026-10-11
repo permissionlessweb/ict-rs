@@ -43,44 +43,37 @@ pub trait GovernanceExt: Chain {
         let output = self
             .chain_exec_tx_with(
                 &[
-                    "tx", "gov", "submit-legacy-proposal", "software-upgrade",
+                    "tx", "upgrade", "software-upgrade",
                     upgrade_name,
                     "--title", &format!("Upgrade to {}", upgrade_name),
-                    "--description", &format!("Software upgrade to {}", upgrade_name),
+                    "--summary", &format!("Software upgrade to {}", upgrade_name),
                     "--upgrade-height", &height_str,
                     "--deposit", deposit,
                 ],
                 opts,
             )
             .await?;
+        if output.exit_code != 0 {
+            return Err(IctError::ExecFailed {
+                exit_code: output.exit_code,
+                stderr: format!("software-upgrade submit failed: {}", output.stderr_str()),
+            });
+        }
         let json_str = output.stdout_str();
         let v: serde_json::Value =
             serde_json::from_str(json_str.trim()).unwrap_or(serde_json::Value::Null);
 
-        // Extract proposal_id from response — check multiple locations
-        let proposal_id = v["proposal_id"]
-            .as_str()
-            .and_then(|s| s.parse().ok())
-            .or_else(|| v["proposal_id"].as_u64())
-            // Check in tx logs/events
-            .or_else(|| {
-                v["logs"].as_array()?.iter().find_map(|log| {
-                    log["events"].as_array()?.iter().find_map(|evt| {
-                        if evt["type"].as_str()? == "submit_proposal" {
-                            evt["attributes"].as_array()?.iter().find_map(|attr| {
-                                if attr["key"].as_str()? == "proposal_id" {
-                                    attr["value"].as_str()?.parse().ok()
-                                } else {
-                                    None
-                                }
-                            })
-                        } else {
-                            None
-                        }
-                    })
-                })
-            })
-            .unwrap_or(1); // Default to 1 for the first proposal
+        let mut proposal_id = extract_proposal_id(&v);
+        if proposal_id.is_none() {
+            if let Some(hash) = v.get("txhash").and_then(|x| x.as_str()) {
+                proposal_id = query_proposal_id_from_tx(self, hash).await?;
+            }
+        }
+        let proposal_id = proposal_id.ok_or_else(|| {
+            IctError::Config(format!(
+                "software-upgrade tx succeeded but no proposal_id in response: {json_str}"
+            ))
+        })?;
 
         Ok(proposal_id)
     }
@@ -168,3 +161,55 @@ pub trait GovernanceExt: Chain {
 }
 
 impl<T: Chain + ?Sized> GovernanceExt for T {}
+
+
+fn extract_proposal_id(v: &serde_json::Value) -> Option<u64> {
+    let parse_attr = |evt: &serde_json::Value| -> Option<u64> {
+        let typ = evt.get("type")?.as_str()?;
+        if typ != "submit_proposal" && typ != "proposal_deposit" && typ != "message" {
+            return None;
+        }
+        evt.get("attributes")?.as_array()?.iter().find_map(|attr| {
+            let key = attr.get("key")?.as_str()?;
+            if key == "proposal_id" {
+                attr.get("value")
+                    .and_then(|x| x.as_str().and_then(|s| s.parse().ok()).or_else(|| x.as_u64()))
+            } else {
+                None
+            }
+        })
+    };
+
+    v.get("proposal_id")
+        .and_then(|x| x.as_str().and_then(|s| s.parse().ok()).or_else(|| x.as_u64()))
+        .or_else(|| v.get("events")?.as_array()?.iter().find_map(parse_attr))
+        .or_else(|| {
+            v.get("tx_response")?
+                .get("events")?
+                .as_array()?
+                .iter()
+                .find_map(parse_attr)
+        })
+        .or_else(|| {
+            v.get("logs")?.as_array()?.iter().find_map(|log| {
+                log.get("events")?.as_array()?.iter().find_map(parse_attr)
+            })
+        })
+}
+
+async fn query_proposal_id_from_tx<C: Chain + ?Sized>(chain: &C, txhash: &str) -> Result<Option<u64>> {
+    for _ in 0..20 {
+        tokio::time::sleep(std::time::Duration::from_millis(400)).await;
+        let out = chain
+            .chain_exec(&["query", "tx", txhash, "--output", "json"])
+            .await?;
+        if out.exit_code != 0 {
+            continue;
+        }
+        let v: serde_json::Value = serde_json::from_str(out.stdout_str().trim()).unwrap_or(serde_json::Value::Null);
+        if let Some(id) = extract_proposal_id(&v) {
+            return Ok(Some(id));
+        }
+    }
+    Ok(None)
+}

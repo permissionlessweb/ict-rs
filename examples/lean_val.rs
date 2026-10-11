@@ -27,7 +27,7 @@ fn env_or(key: &str, default: &str) -> String {
 }
 
 fn upgrade_repo() -> String {
-    env_or("ICT_UPGRADE_REPO", "terpnetwork/terp-core")
+    env_or("ICT_UPGRADE_REPO", "registry.terp.network/terp-core")
 }
 
 fn image_version() -> String {
