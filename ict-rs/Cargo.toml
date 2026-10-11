@@ -98,7 +98,6 @@ tempfile = { version = "3", optional = false }
 terp-rs = { path = "../../terp-rs/crates/sdk", package = "terp-rs", features = ["rpc"] }
 zk-cosmwasm = { path = "../../cosmwasm/packages/zk", default-features = false }
 tokio = { version = "1", features = ["full"] }
-cw-orch-ibc = { path = "../../terp-rs/scripts/ibc-ops/cw-orch-ibc" }
 tokio-test = "0.4"
 tracing-subscriber = { version = "0.3", features = ["env-filter"] }
 
