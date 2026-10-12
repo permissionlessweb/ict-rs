@@ -13,7 +13,7 @@
 //! export ZCASH_DEVTOOL_SERVER=127.0.0.1:9067   # compact-tx-streamer; not ZAKURA_RPC
 //! export ZCASH_DEVTOOL_NETWORK=regtest
 //! export ZAKURAD_BIN=$HOME/abstract/terp-core/crates/zakura/target/zakura-regtest-e2e-linux/zakurad
-//! export DREGG_NODE_BIN=$HOME/abstract/terp-core/crates/dregg/svg-mint/target/linux-gnu/svg-mint-fed
+//! export DREGG_NODE_BIN=$HOME/abstract/terp-core/crates/terp-rs/tools/svg-mint/target/linux-gnu/svg-mint-fed
 //! cargo run --example svg_mint_local_prod -p ict-rs-cw-orch \
 //!   --features docker,zakura,dregg-node,ethereum,bitcoin
 //! ```
@@ -351,8 +351,8 @@ async fn exercise(
         .to_string();
     let from = ANVIL_DEFAULT_ACCOUNTS[0].1;
     let treasury = ANVIL_DEFAULT_ACCOUNTS[1].0;
-    let eth_wei = dregg_svg_mint::prices::ETH_WEI;
-    let btc_sats = dregg_svg_mint::prices::BTC_SATS;
+    let eth_wei = dregg::prices::ETH_WEI;
+    let btc_sats = dregg::prices::BTC_SATS;
     let (tx_hash, vault_addr, lock_id) = eth_vault_lock(anvil, from, treasury, &memo_hex).await?;
 
     let deposit = fed_signed(
@@ -654,7 +654,7 @@ async fn exercise(
             &daemon,
             &collection_for_mint,
             &native_svg_mint_msg(),
-            &[Coin::new(dregg_svg_mint::prices::NATIVE_AMOUNT, "uterp")],
+            &[Coin::new(dregg::prices::NATIVE_AMOUNT, "uterp")],
         )
     })
     .await?
@@ -678,7 +678,7 @@ async fn exercise(
         .into());
     }
     let tpl = wasm_smart_query(&cid, &home, &collection_addr, r#"{"svg_template":{}}"#).unwrap_or_default();
-    if dregg_svg_mint::hopalong::is_vanilla_placeholder(&tpl) {
+    if dregg::hopalong::is_vanilla_placeholder(&tpl) {
         return Err(format!("collection is vanilla 1x1 SVG, expected hopalong entropy template: {tpl}").into());
     }
     let height = 2u64;
@@ -941,7 +941,7 @@ fn deploy_svg_cw_orch(
 ) -> Result<(String, String, String, String), Box<dyn std::error::Error>> {
     let _ = owner;
     let denom = chain.config().denom.clone();
-    let fund = dregg_svg_mint::checkout::native_needed_for_nfts(2);
+    let fund = dregg::checkout::native_needed_for_nfts(2);
     let arts = arts.to_path_buf();
     let builder = daemon_builder_from_chain(chain, Some(LAB_MNEMONIC))?;
     let out = std::thread::spawn(move || -> Result<(String, String, String, String), String> {
@@ -1165,7 +1165,7 @@ async fn eth_vault_lock(
         )
         .into());
     }
-    let eth_hex = format!("0x{:x}", dregg_svg_mint::prices::ETH_WEI);
+    let eth_hex = format!("0x{:x}", dregg::prices::ETH_WEI);
     let sent = anvil
         .exec_cast(&[
             "send",
@@ -1227,7 +1227,7 @@ async fn eth_vault_refund(
 /// solc creation bytecode only. Constructor args are passed to `cast send --create`.
 fn vault_creation_bytecode() -> Result<String, String> {
     let sol = PathBuf::from(env!("CARGO_MANIFEST_DIR"))
-        .join("../../dregg/svg-mint/chain/SvgMintRailVault.sol");
+        .join("../../terp-rs/tools/svg-mint/chain/SvgMintRailVault.sol");
     let out_dir = std::env::temp_dir().join("svg-mint-vault-solc-lock3");
     let _ = std::fs::create_dir_all(&out_dir);
     let status = std::process::Command::new(docker_bin())
@@ -1359,7 +1359,7 @@ async fn exercise_onboard_passkey(
     std::env::set_var("ONBOARD_FROM", granter);
     std::env::set_var("ONBOARD_RUNTIME", granter);
     std::env::set_var("ONBOARD_DAO", granter);
-    std::env::set_var("ONBOARD_RUNWAY_AMOUNT", terp_onboard_authz::RUNWAY_UTHOL);
+    std::env::set_var("ONBOARD_RUNWAY_AMOUNT", hash_market::onboard_authz::RUNWAY_UTHOL);
 
     let shown = terpd_tx(
         cid,
@@ -1415,12 +1415,12 @@ async fn exercise_onboard_passkey(
     }
 
     let bind = "127.0.0.1:19091";
-    let mut rt = terp_onboard_authz::OnboardRuntime::from_env();
+    let mut rt = hash_market::onboard_authz::OnboardRuntime::from_env();
     rt.service_name = "e2e-onboard".into();
     rt.roles.runtime_key = granter.to_string();
     rt.roles.dao = granter.to_string();
     rt.roles.chain_id = chain_id.to_string();
-    rt.runway_amount = terp_onboard_authz::RUNWAY_UTHOL.into();
+    rt.runway_amount = hash_market::onboard_authz::RUNWAY_UTHOL.into();
     rt.broadcast = true;
     rt.broadcaster = Some(Box::new(LabTerpdBroadcaster {
         cid: cid.to_string(),
@@ -1433,7 +1433,7 @@ async fn exercise_onboard_passkey(
     let bind_c = bind.to_string();
     let rt_c = rt.clone();
     std::thread::spawn(move || {
-        let _ = terp_onboard_authz::http::serve(&bind_c, rt_c);
+        let _ = hash_market::onboard_authz::http::serve(&bind_c, rt_c);
     });
     std::thread::sleep(std::time::Duration::from_millis(200));
 
@@ -1494,7 +1494,7 @@ async fn exercise_onboard_passkey(
     {
         return Err(format!("feegrant must not allow MsgSend: {grant}").into());
     }
-    if grant["runway"]["amount"] != terp_onboard_authz::RUNWAY_UTHOL {
+    if grant["runway"]["amount"] != hash_market::onboard_authz::RUNWAY_UTHOL {
         return Err(format!("runway must be 1 native unit: {grant}").into());
     }
 
@@ -1512,7 +1512,7 @@ async fn exercise_onboard_passkey(
             "json",
         ],
     )?;
-    if !bals.contains(terp_onboard_authz::RUNWAY_UTHOL) {
+    if !bals.contains(hash_market::onboard_authz::RUNWAY_UTHOL) {
         return Err(format!("user balance missing 1-unit runway: {bals}").into());
     }
     let fg = terpd_tx(
@@ -1536,11 +1536,11 @@ async fn exercise_onboard_passkey(
     let status = http_json("GET", &format!("http://{bind}/status"), None)?;
     if !status
         .to_string()
-        .contains(terp_onboard_authz::ADD_AUTHENTICATOR_TYPE_URL)
+        .contains(hash_market::onboard_authz::ADD_AUTHENTICATOR_TYPE_URL)
     {
         return Err(format!(
             "feegrant proxy /status missing {}: {status}",
-            terp_onboard_authz::ADD_AUTHENTICATOR_TYPE_URL
+            hash_market::onboard_authz::ADD_AUTHENTICATOR_TYPE_URL
         )
         .into());
     }
@@ -1554,7 +1554,7 @@ async fn exercise_onboard_passkey(
         .cloned()
         .unwrap_or_default();
     if !reg_allowed.iter().any(|x| {
-        x.as_str() == Some(terp_onboard_authz::ADD_AUTHENTICATOR_TYPE_URL)
+        x.as_str() == Some(hash_market::onboard_authz::ADD_AUTHENTICATOR_TYPE_URL)
     }) {
         return Err(format!("register-grant must allow MsgAddAuthenticator: {register}").into());
     }
@@ -1598,7 +1598,7 @@ async fn exercise_onboard_passkey(
                 "tx",
                 "smartaccount",
                 "add-authenticator",
-                terp_onboard_authz::AUTHENTICATOR_SIGNATURE,
+                hash_market::onboard_authz::AUTHENTICATOR_SIGNATURE,
                 &pk_key,
                 "--from",
                 "passkey-user",
@@ -1646,7 +1646,7 @@ async fn exercise_onboard_passkey(
     wait_for_blocks(chain, 1).await.ok();
     terpd_wait_next_block(cid, home);
     let auths = query_authenticators(cid, home, &user)?;
-    if !terp_onboard_authz::authenticators_query_ok(&auths) {
+    if !hash_market::onboard_authz::authenticators_query_ok(&auths) {
         return Err(format!("authenticator query empty after feegrant-paid register: {auths}").into());
     }
 
@@ -1691,7 +1691,7 @@ async fn exercise_onboard_passkey(
         "granter": granter_out,
         "txhash": txhash,
         "runway_txhash": grant.get("runway_txhash"),
-        "runway_amount": terp_onboard_authz::RUNWAY_UTHOL,
+        "runway_amount": hash_market::onboard_authz::RUNWAY_UTHOL,
         "denom": denom,
         "balances": bals,
         "feegrant": fg,
@@ -1712,7 +1712,7 @@ struct LabTerpdBroadcaster {
     chain_id: String,
 }
 
-impl terp_onboard_authz::GrantBroadcaster for LabTerpdBroadcaster {
+impl hash_market::onboard_authz::GrantBroadcaster for LabTerpdBroadcaster {
     fn broadcast_authz_exec(&self, exec: &serde_json::Value) -> serde_json::Value {
         let inner = exec.get("msgs").and_then(|m| m.get(0)).unwrap_or(exec);
         let grantee = inner
@@ -1734,8 +1734,8 @@ impl terp_onboard_authz::GrantBroadcaster for LabTerpdBroadcaster {
             .filter(|v: &Vec<String>| !v.is_empty())
             .unwrap_or_else(|| {
                 vec![
-                    terp_onboard_authz::ADD_AUTHENTICATOR_TYPE_URL.to_string(),
-                    terp_onboard_authz::ADD_AUTHENTICATOR_TYPE_URL_TERP.to_string(),
+                    hash_market::onboard_authz::ADD_AUTHENTICATOR_TYPE_URL.to_string(),
+                    hash_market::onboard_authz::ADD_AUTHENTICATOR_TYPE_URL_TERP.to_string(),
                 ]
             });
         let spend_c = format!("{spend}{}", self.denom);
@@ -1923,13 +1923,13 @@ fn terpd_height(cid: &str, home: &str) -> u64 {
         ),
         Err(_) => return 0,
     };
-    terp_onboard_authz::parse_status_height(&blob)
+    hash_market::onboard_authz::parse_status_height(&blob)
 }
 
 fn terpd_wait_next_block(cid: &str, home: &str) {
     let cid = cid.to_string();
     let home = home.to_string();
-    terp_onboard_authz::wait_until_height_commits(
+    hash_market::onboard_authz::wait_until_height_commits(
         terpd_height(&cid, &home),
         || terpd_height(&cid, &home),
         || std::thread::sleep(std::time::Duration::from_millis(400)),
@@ -1961,7 +1961,7 @@ fn terpd_account_sequence(cid: &str, home: &str, addr: &str) -> Option<u64> {
         String::from_utf8_lossy(&out.stdout),
         String::from_utf8_lossy(&out.stderr)
     );
-    terp_onboard_authz::parse_account_sequence(&blob)
+    hash_market::onboard_authz::parse_account_sequence(&blob)
 }
 
 fn query_authenticators(cid: &str, home: &str, addr: &str) -> Result<String, String> {
@@ -1981,7 +1981,7 @@ fn query_authenticators(cid: &str, home: &str, addr: &str) -> Result<String, Str
                 "json",
             ],
         ) {
-            Ok(s) if terp_onboard_authz::authenticators_query_ok(&s) => return Ok(s),
+            Ok(s) if hash_market::onboard_authz::authenticators_query_ok(&s) => return Ok(s),
             Ok(s) => last = s,
             Err(e) => last = e,
         }

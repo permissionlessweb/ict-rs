@@ -79,15 +79,15 @@ const ADMIN_FX: &str = "terp1fxccvvhhy43tvet2ah7jqwq4cwl9k3dxmww052";
 fn main() {
     let _ = rustls::crypto::ring::default_provider().install_default();
     let state = PathBuf::from(std::env::var("HOME").unwrap_or_default()).join(".cw-orchestrator/state.json");
-    let admin_mn = dregg_svg_mint::hd::load_minter_admin_mnemonic().ok();
-    let runtime_mn = dregg_svg_mint::hd::load_dregg_runtime_mnemonic().ok();
+    let admin_mn = dregg::hd::load_minter_admin_mnemonic().ok();
+    let runtime_mn = dregg::hd::load_dregg_runtime_mnemonic().ok();
     let admin = admin_mn
         .as_deref()
-        .and_then(|m| dregg_svg_mint::hd::HdEngine::terp1_from_mnemonic(m).ok())
+        .and_then(|m| dregg::hd::HdEngine::terp1_from_mnemonic(m).ok())
         .unwrap_or_default();
     let runtime = runtime_mn
         .as_deref()
-        .and_then(|m| dregg_svg_mint::hd::HdEngine::terp1_from_mnemonic(m).ok())
+        .and_then(|m| dregg::hd::HdEngine::terp1_from_mnemonic(m).ok())
         .unwrap_or_default();
     let (minter_code, minter, svg_code, svg) = match morocco_from_state(&state) {
         Ok(t) => t,

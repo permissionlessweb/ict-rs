@@ -268,7 +268,7 @@ fn spawn_fed(
     {
         return Ok(());
     }
-    let manifest = PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("../../dregg/svg-mint/Cargo.toml");
+    let manifest = PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("../../terp-rs/tools/svg-mint/Cargo.toml");
     let listen = format!("0.0.0.0:{DREGG_QUERY_PORT}");
     let mut cmd = Command::new("cargo");
     cmd.args([
@@ -393,7 +393,7 @@ async fn eth_vault_lock(
 
 fn vault_creation_bytecode() -> Result<String, String> {
     let sol = PathBuf::from(env!("CARGO_MANIFEST_DIR"))
-        .join("../../dregg/svg-mint/chain/SvgMintRailVault.sol");
+        .join("../../terp-rs/tools/svg-mint/chain/SvgMintRailVault.sol");
     let out_dir = std::env::temp_dir().join("svg-mint-vault-solc-base");
     let _ = std::fs::create_dir_all(&out_dir);
     let status = Command::new("docker")

@@ -77,7 +77,7 @@ fn chain_info_existing() -> ChainInfoOwned {
 
 fn mint_existing() {
     let info = chain_info_existing();
-    let mnemonic = dregg_svg_mint::hd::load_dregg_runtime_mnemonic()
+    let mnemonic = dregg::hd::load_dregg_runtime_mnemonic()
         .expect("DREGG_RUNTIME_MNEMONIC or ~/.terp/dregg-svg-runtime.mnemonic");
     let minter = std::env::var("COLLECTION")
         .or_else(|_| std::env::var("MINTER"))
@@ -137,7 +137,7 @@ async fn spawn_local_and_mint() -> Result<serde_json::Value, Box<dyn std::error:
             .map_err(|e| format!("DaemonBuilder.build: {e}"))?;
         let d = deploy_hopalong_minter(&daemon, &arts_move, &denom, 1_000_000)?;
         let sender = daemon.sender_addr().to_string();
-        let funds = vec![Coin::new(dregg_svg_mint::prices::NATIVE_AMOUNT, "uterp")];
+        let funds = vec![Coin::new(dregg::prices::NATIVE_AMOUNT, "uterp")];
         let tx = mint_via_daemon(
             &daemon,
             &d.collection_addr,

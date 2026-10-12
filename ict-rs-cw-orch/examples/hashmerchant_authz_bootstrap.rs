@@ -20,12 +20,12 @@
 use cw_orch::prelude::*;
 use cw_orch_core::environment::{ChainInfoOwned, ChainKind, NetworkInfoOwned};
 use cw_orch_traits::Stargate;
-use dregg_svg_mint::hd::HdEngine;
+use dregg::hd::HdEngine;
 use prost::Message;
 use prost_types::Any;
 use serde_json::json;
 use std::path::PathBuf;
-use terp_onboard_authz::{dao_authz_grants, OnboardRoles, AUTHZ_MSG_TYPES};
+use hash_market::onboard_authz::{dao_authz_grants, OnboardRoles, AUTHZ_MSG_TYPES};
 
 fn morocco_info() -> ChainInfoOwned {
     let grpc = std::env::var("TERP_MAIN_GRPC").unwrap_or_else(|_| "http://127.0.0.1:9090".into());

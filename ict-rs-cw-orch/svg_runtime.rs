@@ -56,7 +56,7 @@ pub fn deploy_hopalong_minter(
 ) -> Result<DeployedSvg, String> {
     std::env::set_var("ARTIFACTS_DIR", arts.display().to_string());
     let owner = daemon.sender_addr().to_string();
-    let coll_init = dregg_svg_mint::hopalong::collection_instantiate(&owner);
+    let coll_init = dregg::hopalong::collection_instantiate(&owner);
     let svg_up = daemon
         .upload(&SvgWasm)
         .map_err(|e| format!("cw721-svg upload (cw-orch): {e}"))?;

@@ -89,7 +89,7 @@ fn terpd_height(cid: &str, home: &str) -> u64 {
 fn terpd_wait_next_block(cid: &str, home: &str) {
     let cid = cid.to_string();
     let home = home.to_string();
-    terp_onboard_authz::wait_until_height_commits(
+    hash_market::onboard_authz::wait_until_height_commits(
         terpd_height(&cid, &home),
         || terpd_height(&cid, &home),
         || std::thread::sleep(std::time::Duration::from_millis(400)),
@@ -121,7 +121,7 @@ fn terpd_account_sequence(cid: &str, home: &str, addr: &str) -> Option<u64> {
         String::from_utf8_lossy(&out.stdout),
         String::from_utf8_lossy(&out.stderr)
     );
-    terp_onboard_authz::parse_account_sequence(&blob)
+    hash_market::onboard_authz::parse_account_sequence(&blob)
 }
 
 fn terpd_tx(cid: &str, extra: &[&str]) -> Result<String, String> {
@@ -333,7 +333,7 @@ async fn run() -> Result<serde_json::Value, Box<dyn std::error::Error>> {
             .unwrap_or_else(|_| {
                 PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("../../cw-infuser/artifacts")
             });
-        let fund = dregg_svg_mint::checkout::native_needed_for_nfts(2);
+        let fund = dregg::checkout::native_needed_for_nfts(2);
         let builder = ict_rs_cw_orch::daemon_builder_from_chain(&chain, Some(LAB_MNEMONIC))?;
         let deployed = std::thread::spawn(move || {
             let daemon = builder.build().map_err(|e| format!("Daemon.build: {e}"))?;
@@ -418,12 +418,12 @@ async fn storm(
     std::env::set_var("ONBOARD_RUNTIME", &granter);
     std::env::set_var("ONBOARD_DAO", &granter);
     let bind = "127.0.0.1:19091";
-    let mut rt = terp_onboard_authz::OnboardRuntime::from_env();
+    let mut rt = hash_market::onboard_authz::OnboardRuntime::from_env();
     rt.service_name = "load-onboard".into();
     rt.roles.runtime_key = granter.clone();
     rt.roles.dao = granter.clone();
     rt.roles.chain_id = chain_id.clone();
-    rt.runway_amount = terp_onboard_authz::RUNWAY_UTHOL.into();
+    rt.runway_amount = hash_market::onboard_authz::RUNWAY_UTHOL.into();
     rt.broadcast = true;
     rt.broadcaster = Some(Box::new(LabBroadcaster {
         cid: cid.clone(),
@@ -437,7 +437,7 @@ async fn storm(
     let bind_c = bind.to_string();
     let rt_c = rt.clone();
     std::thread::spawn(move || {
-        let _ = terp_onboard_authz::http::serve(&bind_c, rt_c);
+        let _ = hash_market::onboard_authz::http::serve(&bind_c, rt_c);
     });
     std::thread::sleep(std::time::Duration::from_millis(250));
 
@@ -540,7 +540,7 @@ async fn storm(
                                 "tx",
                                 "smartaccount",
                                 "add-authenticator",
-                                terp_onboard_authz::AUTHENTICATOR_SIGNATURE,
+                                hash_market::onboard_authz::AUTHENTICATOR_SIGNATURE,
                                 &key,
                                 "--from",
                                 &name,
@@ -593,7 +593,7 @@ async fn storm(
                                     "json",
                                 ],
                             ) {
-                                Ok(s) if terp_onboard_authz::authenticators_query_ok(&s) => {
+                                Ok(s) if hash_market::onboard_authz::authenticators_query_ok(&s) => {
                                     last = s;
                                     break;
                                 }
@@ -630,7 +630,7 @@ async fn storm(
             .ok()
             .map(|s| s.contains("\"code\":0") || s.contains("\"code\": 0"))
             .unwrap_or(false);
-        let q_ok = terp_onboard_authz::authenticators_query_ok(&queried);
+        let q_ok = hash_market::onboard_authz::authenticators_query_ok(&queried);
         if add_ok && q_ok {
             auth_ok += 1;
         } else {
@@ -660,8 +660,8 @@ async fn storm(
     let evm_pks = fund_fresh_evm_wallets(anvil, base_anvil, n_wallets, log).await?;
 
     // Parallel rail payments: 3× unit (ETH wei / BTC sats / Base wei).
-    let eth_unit: u128 = dregg_svg_mint::prices::ETH_WEI;
-    let btc_unit: u64 = dregg_svg_mint::prices::BTC_SATS;
+    let eth_unit: u128 = dregg::prices::ETH_WEI;
+    let btc_unit: u64 = dregg::prices::BTC_SATS;
     let triple_eth = format!("0x{:x}", eth_unit.saturating_mul(3));
     let triple_btc = btc_unit.saturating_mul(3);
 
@@ -1006,7 +1006,7 @@ struct LabBroadcaster {
     lock: Mutex<()>,
 }
 
-impl terp_onboard_authz::GrantBroadcaster for LabBroadcaster {
+impl hash_market::onboard_authz::GrantBroadcaster for LabBroadcaster {
     fn broadcast_authz_exec(&self, exec: &serde_json::Value) -> serde_json::Value {
         let _g = self.lock.lock();
         let inner = exec.get("msgs").and_then(|m| m.get(0)).unwrap_or(exec);
@@ -1021,8 +1021,8 @@ impl terp_onboard_authz::GrantBroadcaster for LabBroadcaster {
             })
             .unwrap_or_else(|| {
                 vec![
-                    terp_onboard_authz::ADD_AUTHENTICATOR_TYPE_URL.to_string(),
-                    terp_onboard_authz::ADD_AUTHENTICATOR_TYPE_URL_TERP.to_string(),
+                    hash_market::onboard_authz::ADD_AUTHENTICATOR_TYPE_URL.to_string(),
+                    hash_market::onboard_authz::ADD_AUTHENTICATOR_TYPE_URL_TERP.to_string(),
                 ]
             });
         let mut args: Vec<String> = [
