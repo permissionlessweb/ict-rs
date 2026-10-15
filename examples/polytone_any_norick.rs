@@ -19,13 +19,13 @@ use std::path::PathBuf;
 
 use ict_rs::prelude::*;
 
-const NOTE_WASM: &str = "tests/interchaintest/contracts/polytone_note.wasm";
-const VOICE_WASM: &str = "tests/interchaintest/contracts/polytone_voice.wasm";
-const PROXY_WASM: &str = "tests/interchaintest/contracts/polytone_proxy.wasm";
-const TESTER_WASM: &str = "tests/interchaintest/contracts/polytone_tester.wasm";
-const NORICK_WASM: &str = "tests/interchaintest/contracts/zk_no_rick.wasm";
-const NORICK_VK: &str = "tests/interchaintest/circuits/no_rick.bin";
-const NORICK_PROOF: &str = "tests/interchaintest/circuits/no_rick_proof.json";
+const NOTE_WASM: &str = "artifacts/polytone_note.wasm";
+const VOICE_WASM: &str = "artifacts/polytone_voice.wasm";
+const PROXY_WASM: &str = "artifacts/polytone_proxy.wasm";
+const TESTER_WASM: &str = "artifacts/polytone_tester.wasm";
+const NORICK_WASM: &str = "artifacts/zk_no_rick.wasm";
+const NORICK_VK: &str = "artifacts/no_rick.bin";
+const NORICK_PROOF: &str = "artifacts/no_rick_proof.json";
 
 fn zk_image() -> DockerImage {
     terp_docker_image()

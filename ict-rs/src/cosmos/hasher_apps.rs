@@ -18,13 +18,13 @@ use crate::tx::{TransferOptions, WalletAmount};
 
 fn contracts_dir() -> PathBuf {
     if let Ok(p) = std::env::var("TERP_CORE_ROOT").or_else(|_| std::env::var("TERP_CORE")) {
-        return PathBuf::from(p).join("tests/interchaintest/contracts");
+        return PathBuf::from(p).join("artifacts");
     }
     let mut p = PathBuf::from(env!("CARGO_MANIFEST_DIR"));
     p.pop();
     p.pop();
     p.pop();
-    p.join("tests/interchaintest/contracts")
+    p.join("artifacts")
 }
 
 async fn put_host_wasm(chain: &dyn Chain, host: &Path, dest_name: &str) -> Result<String> {

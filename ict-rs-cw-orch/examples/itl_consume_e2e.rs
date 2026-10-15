@@ -19,12 +19,12 @@ use std::path::PathBuf;
 use std::process::Command;
 use std::sync::Arc;
 use std::time::Duration;
-use terp_onboard_authz::itl_cashapp::{synthetic_received_eml, LIST_CENTS, SKU};
-use terp_onboard_authz::itl_consume::{
+use hash_market::onboard_authz::itl_cashapp::{synthetic_received_eml, LIST_CENTS, SKU};
+use hash_market::onboard_authz::itl_consume::{
     consume_backend_mocked, consume_success_allowed, fp_to_bytes, msg_store_code_with_circuit,
     prove_issued, verify_halo2_proof, ConsumeEngine, K, MSG_STORE_CODE_WITH_CIRCUIT, PROVER_ID,
 };
-use terp_onboard_authz::itl_ingress::{ict_mock_refused, IngressEngine, EVENT_ID};
+use hash_market::onboard_authz::itl_ingress::{ict_mock_refused, IngressEngine, EVENT_ID};
 
 /// ict-rs lab faucet mnemonic (same as svg_mint_cw_orch_runtime). Not FROST.
 const LAB_MNEMONIC: &str =

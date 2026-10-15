@@ -86,8 +86,10 @@ keys:
 EOF
 
 python3 - "$CFG" "$RPC_PORT" "$P2P_PORT" "$ABCI_PORT" "$PRIVVAL_PORT" <<'PY'
+import os
 import sys
 path, rpc, p2p, abci, privval = sys.argv[1:]
+pprof = os.environ.get("STEWARD_PPROF_LADDR", "")
 text = open(path).read().splitlines()
 out = []
 seen_priv = False
@@ -102,6 +104,9 @@ for line in text:
         out.append(f'laddr = "tcp://127.0.0.1:{rpc}"')
     elif stripped.startswith("laddr = ") and "26656" in stripped:
         out.append(f'laddr = "tcp://127.0.0.1:{p2p}"')
+    elif pprof and stripped.startswith("pprof_laddr"):
+        # Default is localhost:6060, which a host terpd may already hold.
+        out.append(f'pprof_laddr = "{pprof}"')
     else:
         out.append(line)
 if not seen_priv:

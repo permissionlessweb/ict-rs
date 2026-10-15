@@ -119,7 +119,42 @@ pub async fn create_ibc_v2_tendermint_path(
         "max_clock_drift": "20s",
         "frozen_height": { "revision_number": "0", "revision_height": "0" },
         "latest_height": { "revision_number": "1", "revision_height": height },
-        "proof_specs": [],
+        // IBC store stays on SHA-256 IAVL. An empty list fails client Validate
+        // ("proof specs cannot be nil"). These are ics23 IavlSpec + TendermintSpec.
+        "proof_specs": [
+            {
+                "leaf_spec": {
+                    "hash": "SHA256",
+                    "prehash_value": "SHA256",
+                    "prehash_key": "NO_HASH",
+                    "length": "VAR_PROTO",
+                    "prefix": "AA=="
+                },
+                "inner_spec": {
+                    "child_order": [0, 1],
+                    "child_size": 33,
+                    "min_prefix_length": 4,
+                    "max_prefix_length": 12,
+                    "hash": "SHA256"
+                }
+            },
+            {
+                "leaf_spec": {
+                    "hash": "SHA256",
+                    "prehash_value": "SHA256",
+                    "prehash_key": "NO_HASH",
+                    "length": "VAR_PROTO",
+                    "prefix": "AA=="
+                },
+                "inner_spec": {
+                    "child_order": [0, 1],
+                    "child_size": 32,
+                    "min_prefix_length": 1,
+                    "max_prefix_length": 1,
+                    "hash": "SHA256"
+                }
+            }
+        ],
         "upgrade_path": ["upgrade", "upgradedIBCState"],
         "allow_update_after_expiry": false,
         "allow_update_after_misbehaviour": false
@@ -181,5 +216,53 @@ async fn ibc_tx_json(terp: &CosmosChain, from: &str, args: &[&str]) -> Result<Va
             out.stdout_str()
         )));
     }
-    Ok(j)
+    // sync broadcast often returns height 0 and no events. Wait for inclusion.
+    let included = j["height"].as_str().unwrap_or("0") != "0"
+        && j["height"].as_str().unwrap_or("0") != "";
+    if included {
+        return Ok(j);
+    }
+    let hash = j["txhash"]
+        .as_str()
+        .filter(|h| !h.is_empty())
+        .ok_or_else(|| {
+            IctError::Config(format!(
+                "tx {} accepted with no hash: {}",
+                args.join(" "),
+                out.stdout_str()
+            ))
+        })?
+        .to_string();
+    for _ in 0..40 {
+        tokio::time::sleep(std::time::Duration::from_millis(400)).await;
+        let q = match terp
+            .chain_exec(&["query", "tx", &hash, "--output", "json"])
+            .await
+        {
+            Ok(q) if q.exit_code == 0 => q,
+            _ => continue,
+        };
+        let Ok(parsed) = serde_json::from_str::<Value>(q.stdout_str().trim()) else {
+            continue;
+        };
+        let tv = if parsed.get("tx_response").is_some() {
+            parsed["tx_response"].clone()
+        } else {
+            parsed
+        };
+        let height = tv["height"].as_str().unwrap_or("0");
+        if height == "0" || height.is_empty() {
+            continue;
+        }
+        if tv["code"].as_u64().unwrap_or(1) != 0 {
+            return Err(IctError::Config(format!(
+                "tx {hash} code!=0: {}",
+                q.stdout_str()
+            )));
+        }
+        return Ok(tv);
+    }
+    Err(IctError::Config(format!(
+        "timed out waiting for tx {hash}"
+    )))
 }

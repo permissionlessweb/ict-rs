@@ -154,15 +154,30 @@ fn publish(lanes: &[Arc<Mutex<Served>>], bodies: &[Served]) {
     }
 }
 
+fn chain_image() -> DockerImage {
+    // CORRIDOR_* overrides the shared TERP_IMAGE_* / ICT_IMAGE_* pair only when
+    // both are set. A retired tag is refused here so a stale shell cannot
+    // fall through to docker.io/terpnetwork/terp-core:local-zk.
+    let corridor_repo = std::env::var("CORRIDOR_ICT_IMAGE").ok().filter(|s| !s.is_empty());
+    let corridor_tag = std::env::var("CORRIDOR_ICT_IMAGE_TAG").ok().filter(|s| !s.is_empty());
+    if let (Some(repository), Some(version)) = (corridor_repo, corridor_tag) {
+        if version == "local" || version == "local-zk" {
+            panic!(
+                "CORRIDOR_ICT_IMAGE_TAG={version} is retired. Set TERP_IMAGE_REPO and TERP_IMAGE_VERSION."
+            );
+        }
+        return DockerImage {
+            repository,
+            version,
+            uid_gid: None,
+        };
+    }
+    ict_rs::image_env::terp_docker_image()
+}
+
 fn chain_config(pubkey_b64: String) -> Result<ChainConfig, Box<dyn std::error::Error>> {
     let mut cfg = builtin_chain_config("terp")?;
-    let repo = std::env::var("CORRIDOR_ICT_IMAGE").unwrap_or_else(|_| "terpnetwork/terp-core".into());
-    let tag = std::env::var("CORRIDOR_ICT_IMAGE_TAG").unwrap_or_else(|_| "local-zk".into());
-    cfg.images = vec![DockerImage {
-        repository: repo,
-        version: tag,
-        uid_gid: None,
-    }];
+    cfg.images = vec![chain_image()];
     cfg.gas_prices = format!("0.025{DENOM}");
     cfg.block_time = "2s".into();
     cfg.env.clear();

@@ -13,8 +13,9 @@
 //! ```
 //!
 //! Ensure the contract and circuit files exist:
-//! - `terp-core/tests/interchaintest/contracts/zk_no_rick.wasm`
-//! - `terp-core/tests/interchaintest/circuits/no_rick.bin`
+//! - `artifacts/zk_no_rick.wasm`
+//! - `artifacts/no_rick.bin`
+//! - `artifacts/no_rick_proof.json`
 //!
 //! ```sh
 //! cargo run --example no_rick --features docker
@@ -28,9 +29,9 @@ use ict_rs::prelude::*;
 
 
 /// Host-side paths to contract and VK files (relative to ZK workspace root).
-const WASM_REL: &str = "terp-core/tests/interchaintest/contracts/zk_no_rick.wasm";
-const VK_REL: &str = "terp-core/tests/interchaintest/circuits/no_rick.bin";
-const PROOF_REL: &str = "terp-core/tests/interchaintest/circuits/no_rick_proof.json";
+const WASM_REL: &str = "artifacts/zk_no_rick.wasm";
+const VK_REL: &str = "artifacts/no_rick.bin";
+const PROOF_REL: &str = "artifacts/no_rick_proof.json";
 
 /// Container-side paths where we copy the files.
 const CONTAINER_WASM: &str = "/tmp/zk_no_rick.wasm";
@@ -79,28 +80,32 @@ fn terp_zk_config() -> ChainConfig {
     }
 }
 
-/// Resolve the ZK workspace root (parent of terp-core/).
-/// Checks ZK_ROOT env var, then tries `../../..` from the crate dir.
+/// Directory that contains `artifacts/zk_no_rick.wasm`.
 fn resolve_zk_root() -> Result<PathBuf, Box<dyn std::error::Error>> {
-    if let Ok(root) = std::env::var("ZK_ROOT") {
-        let p = PathBuf::from(root);
-        if p.exists() {
-            return Ok(p);
+    let mut cands = Vec::new();
+    for key in ["TERP_CORE", "ZK_ROOT", "GITHUB_WORKSPACE"] {
+        if let Ok(v) = std::env::var(key) {
+            let p = PathBuf::from(v);
+            cands.push(p.join("terp-core"));
+            cands.push(p);
         }
     }
-
-    // Walk up from the crate directory to find terp-core/
+    if let Ok(cwd) = std::env::current_dir() {
+        cands.push(cwd);
+    }
     let mut dir = PathBuf::from(env!("CARGO_MANIFEST_DIR"));
-    for _ in 0..6 {
-        if dir.join("terp-core").exists() {
-            return Ok(dir);
-        }
+    for _ in 0..8 {
+        cands.push(dir.clone());
         if !dir.pop() {
             break;
         }
     }
-
-    Err("Cannot find ZK workspace root. Set ZK_ROOT env var.".into())
+    for root in cands {
+        if root.join(WASM_REL).is_file() {
+            return Ok(root);
+        }
+    }
+    Err("Cannot find artifacts/zk_no_rick.wasm. Set TERP_CORE.".into())
 }
 
 /// Run the test logic, returning the chain so the caller can always clean up.

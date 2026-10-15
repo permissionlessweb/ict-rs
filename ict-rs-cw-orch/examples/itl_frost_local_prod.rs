@@ -16,7 +16,21 @@ use std::path::PathBuf;
 use std::sync::Arc;
 use std::thread;
 use std::time::Duration;
-use terp_onboard_authz::itl_frost_rotate::vk_commit;
+use sha2::{Digest, Sha256};
+
+fn vk_commit(group_vk: &str) -> String {
+    let mut h = Sha256::new();
+    h.update(b"itl-frost-rotate-v1");
+    h.update(group_vk.as_bytes());
+    let bytes = h.finalize();
+    const HEX: &[u8] = b"0123456789abcdef";
+    let mut s = String::with_capacity(64);
+    for b in bytes {
+        s.push(HEX[(b >> 4) as usize] as char);
+        s.push(HEX[(b & 0xf) as usize] as char);
+    }
+    s
+}
 
 fn refuse_mock() -> Result<(), Box<dyn std::error::Error>> {
     if std::env::var("ICT_MOCK").ok().as_deref() == Some("1") {
@@ -85,7 +99,7 @@ fn qdata(v: &Value) -> &Value {
     v.get("data").unwrap_or(v)
 }
 
-async fn store_code_wait(chain: &CosmosChain, container_wasm: &str) -> Result<u64, String> {
+async fn store_code_wait(chain: &CosmosChain, container_wasm: &str) -> Result<(u64, String), String> {
     let opts = chain.default_tx_opts().from("validator").gas_adjustment(2.0);
     let out = chain
         .chain_exec_tx_with(&["tx", "wasm", "store", container_wasm], opts)
@@ -123,10 +137,87 @@ async fn store_code_wait(chain: &CosmosChain, container_wasm: &str) -> Result<u6
             continue;
         };
         if let Some(id) = extract_code_id(&tv) {
-            return Ok(id);
+            return Ok((id, hash.to_string()));
         }
     }
     Err(format!("timeout waiting for store tx {hash}"))
+}
+
+fn msg_is_rotate(msg: Option<&Value>) -> bool {
+    match msg {
+        Some(Value::Object(o)) => o.contains_key("rotate_frost_pubkey"),
+        Some(Value::String(s)) => {
+            if s.contains("rotate_frost_pubkey") {
+                return true;
+            }
+            base64_decode(s)
+                .map(|b| String::from_utf8_lossy(&b).contains("rotate_frost_pubkey"))
+                .unwrap_or(false)
+        }
+        _ => false,
+    }
+}
+
+fn base64_decode(s: &str) -> Option<Vec<u8>> {
+    fn val(c: u8) -> Option<u8> {
+        match c {
+            b'A'..=b'Z' => Some(c - b'A'),
+            b'a'..=b'z' => Some(c - b'a' + 26),
+            b'0'..=b'9' => Some(c - b'0' + 52),
+            b'+' | b'-' => Some(62),
+            b'/' | b'_' => Some(63),
+            _ => None,
+        }
+    }
+    let bytes = s.trim().as_bytes();
+    let mut out = Vec::new();
+    let mut buf: u32 = 0;
+    let mut n = 0;
+    for &c in bytes {
+        if c == b'=' || c == b'\n' || c == b'\r' {
+            continue;
+        }
+        let v = val(c)?;
+        buf = (buf << 6) | u32::from(v);
+        n += 1;
+        if n == 4 {
+            out.push((buf >> 16) as u8);
+            out.push((buf >> 8) as u8);
+            out.push(buf as u8);
+            buf = 0;
+            n = 0;
+        }
+    }
+    if n == 2 {
+        out.push((buf >> 4) as u8);
+    } else if n == 3 {
+        out.push((buf >> 10) as u8);
+        out.push((buf >> 2) as u8);
+    }
+    Some(out)
+}
+
+/// True only for MsgExecuteContract rotate_frost_pubkey on this contract from this sender.
+fn is_committee_rotate(tx: &Value, contract: &str, sender: &str) -> bool {
+    let Some(msgs) = tx.pointer("/tx/body/messages").and_then(|v| v.as_array()) else {
+        return false;
+    };
+    msgs.iter().any(|m| {
+        let ty = m.get("@type").and_then(|t| t.as_str()).unwrap_or("");
+        ty.ends_with("MsgExecuteContract")
+            && m.get("sender").and_then(|s| s.as_str()) == Some(sender)
+            && m.get("contract").and_then(|c| c.as_str()) == Some(contract)
+            && msg_is_rotate(m.get("msg"))
+    })
+}
+
+async fn query_tx_json(chain: &CosmosChain, hash: &str) -> Result<Value, Box<dyn std::error::Error>> {
+    let q = chain
+        .chain_exec(&["query", "tx", hash, "--output", "json"])
+        .await?;
+    let body = q.stdout_str();
+    let v: Value = serde_json::from_str(body.trim())?;
+    Ok(v)
 }
 
 async fn query_status(chain: &CosmosChain, contract: &str) -> Result<Value, Box<dyn std::error::Error>> {
@@ -143,7 +234,7 @@ async fn rotate_execute(chain: &CosmosChain) -> Result<Value, Box<dyn std::error
         .primary_node()?
         .copy_file_from_host(&wasm, dest)
         .await?;
-    let code_id = store_code_wait(chain, dest)
+    let (code_id, store_hash) = store_code_wait(chain, dest)
         .await
         .map_err(|e| format!("store_code: {e}"))?;
     wait_for_blocks(chain, 1).await?;
@@ -177,9 +268,10 @@ async fn rotate_execute(chain: &CosmosChain) -> Result<Value, Box<dyn std::error
         }
     })
     .to_string();
-    chain
+    let rotate_tx = chain
         .execute_contract("validator", &contract, &invoke, None)
         .await?;
+    let rotate_hash = rotate_tx.tx_hash.clone();
     wait_for_blocks(chain, 1).await?;
     let q_pending = query_status(chain, &contract).await?;
 
@@ -307,7 +399,32 @@ async fn rotate_execute(chain: &CosmosChain) -> Result<Value, Box<dyn std::error
         return Err(format!("usher missing from seats: {q_roster}").into());
     }
 
+    let rotate_q = query_tx_json(chain, &rotate_hash).await?;
+    let store_q = query_tx_json(chain, &store_hash).await?;
+    let sender = rotate_q
+        .pointer("/tx/body/messages/0/sender")
+        .and_then(|s| s.as_str())
+        .unwrap_or("")
+        .to_string();
+    if sender.is_empty() {
+        return Err("rotate tx has no sender".into());
+    }
+    if !is_committee_rotate(&rotate_q, &contract, &sender) {
+        return Err("rotate tx is not the old committee rotate_frost_pubkey for this contract".into());
+    }
+    if is_committee_rotate(&store_q, &contract, &sender) {
+        return Err("an unrelated confirmed tx was accepted as the committee rotate".into());
+    }
+    let api = chain
+        .primary_node()?
+        .host_api_port
+        .ok_or("lcd port missing")?;
+
     Ok(json!({
+        "lcd": format!("http://127.0.0.1:{api}"),
+        "rotate_tx": rotate_hash,
+        "other_tx": store_hash,
+        "sender": sender,
         "code_id": code_id,
         "contract": contract,
         "old_vk": old_vk,

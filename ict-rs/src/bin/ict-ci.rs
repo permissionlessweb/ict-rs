@@ -1,6 +1,6 @@
 //! Thin CI dispatcher: run prebuilt example binaries without a second cargo build.
 //!
-//! Mock suites need no Docker. Docker suites use TERP_IMAGE_*=local like polytone.
+//! Every suite boots the image from TERP_IMAGE_REPO and TERP_IMAGE_VERSION.
 //!
 //! Not dispatched (extra image / feature / live net): cosmos_upgrade, no_rick,
 //! polytone_any_norick (zk image + any-proxy wasm + proof fixture),
@@ -11,14 +11,17 @@ use std::env;
 use std::path::PathBuf;
 use std::process::{Command, ExitCode};
 
-const MOCK_SUITES: &[&str] = &[
+const MOCK_SUITES: &[&str] = &[];
+const DOCKER_SUITES: &[&str] = &[
     "basic_cosmos",
     "integration_test",
     "ibc_hooks",
     "pfm",
     "circuit_deposit",
+    "ibc_transfer",
+    "polytone",
+    "state_sync",
 ];
-const DOCKER_SUITES: &[&str] = &["ibc_transfer", "polytone", "state_sync"];
 
 fn all_suites() -> Vec<&'static str> {
     let mut v = Vec::from(MOCK_SUITES);
@@ -88,6 +91,12 @@ fn run_one(suite: &str) -> ExitCode {
 }
 
 fn run_group(name: &str) -> ExitCode {
+    if name == "mock" {
+        eprintln!(
+            "ict-ci mock group is empty. Use run-group docker with TERP_IMAGE_REPO and TERP_IMAGE_VERSION."
+        );
+        return ExitCode::from(2);
+    }
     let Some(suites) = group(name) else {
         usage();
         return ExitCode::from(2);

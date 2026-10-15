@@ -137,6 +137,11 @@ path = "../examples/ibc_v2.rs"
 required-features = ["docker", "testing", "terp"]
 
 [[example]]
+name = "ibc_v2_callbacks"
+path = "../examples/ibc_v2_callbacks.rs"
+required-features = ["docker", "testing", "terp"]
+
+[[example]]
 name = "ibc_wasm_lc"
 path = "../examples/ibc_wasm_lc.rs"
 required-features = ["docker", "testing", "terp"]
@@ -196,6 +201,11 @@ required-features = ["docker"]
 [[example]]
 name = "headstash"
 path = "../examples/headstash.rs"
+required-features = ["docker"]
+
+[[example]]
+name = "headstash_local_e2e"
+path = "../examples/headstash_local_e2e.rs"
 required-features = ["docker"]
 
 [[example]]
@@ -274,3 +284,28 @@ required-features = ["docker", "terp"]
 name = "bulk_memory_gas"
 path = "../examples/bulk_memory_gas.rs"
 required-features = ["docker"]
+
+[[example]]
+name = "dao_testing"
+path = "../examples/dao_testing.rs"
+required-features = ["docker", "terp", "testing"]
+
+[[example]]
+name = "abstract_account"
+path = "../examples/abstract_account.rs"
+required-features = ["docker", "terp", "testing"]
+
+[[example]]
+name = "suite_wasm_smoke"
+path = "../examples/suite_wasm_smoke.rs"
+required-features = ["docker", "terp", "testing"]
+
+[[example]]
+name = "smart_accounts"
+path = "../examples/smart_accounts.rs"
+required-features = ["docker", "terp", "testing"]
+
+[[example]]
+name = "wasm_light_clients"
+path = "../examples/wasm_light_clients.rs"
+required-features = ["docker", "terp", "testing"]

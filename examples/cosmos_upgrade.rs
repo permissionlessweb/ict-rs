@@ -11,12 +11,14 @@
 //!
 //! ## Images
 //!
+//! `TERP_IMAGE_REPO` and `TERP_IMAGE_VERSION` are the final image.
+//! `TERP_UPGRADE_FROM` is the halt image (it must not already register the
+//! plan). `TERP_UPGRADE_MID` is the image that executes the plan and, on
+//! v6.3, arms the next one. `local` and `local-zk` are refused.
+//!
 //! ```sh
-//! # From-image and to-image both come from the self-hosted registry.
-//! make docker-ensure-image TAG=v5.2.0 BUILD=0
-//! make docker-ensure-local-zk
-//! ICT_UPGRADE_FROM=v5.2.0 ICT_UPGRADE_TO=local-zk ICT_UPGRADE_NAME=v6.1 \
-//!   ICT_UPGRADE_REPO=registry.terp.network/terp-core \
+//! TERP_IMAGE_REPO=registry.terp.network/terp-core \
+//! TERP_IMAGE_VERSION=v6.4.0 TERP_UPGRADE_FROM=v6.2.1 TERP_UPGRADE_MID=v6.3.0 \
 //!   cargo run --example cosmos_upgrade --features docker
 //! ```
 //!
@@ -38,23 +40,77 @@ fn env_or(key: &str, default: &str) -> String {
     std::env::var(key).ok().filter(|s| !s.is_empty()).unwrap_or_else(|| default.to_string())
 }
 
+fn nonempty(key: &str) -> Option<String> {
+    std::env::var(key).ok().filter(|s| !s.is_empty())
+}
+
+fn refuse_retired(label: &str, tag: &str) {
+    if tag == "local" || tag == "local-zk" {
+        panic!(
+            "{label}={tag} is retired. Set TERP_IMAGE_VERSION (and TERP_UPGRADE_FROM only when the halt image is a different real tag)."
+        );
+    }
+}
+
 fn start_version() -> String {
-    env_or("ICT_UPGRADE_FROM", "v5.2.0")
+    let tag = nonempty("ICT_UPGRADE_FROM").or_else(|| nonempty("TERP_UPGRADE_FROM")).unwrap_or_else(|| {
+        panic!(
+            "set TERP_UPGRADE_FROM (or ICT_UPGRADE_FROM) to the pre-upgrade tag. \
+             The SDK rejects a plan whose handler is already linked in the running binary \
+             (BINARY UPDATED BEFORE TRIGGER). TERP_IMAGE_VERSION is the final image, not the halt image."
+        );
+    });
+    refuse_retired("TERP_UPGRADE_FROM", &tag);
+    tag
+}
+
+fn plan_name_from_tag(version: &str) -> String {
+    let bare = version.trim_start_matches('v');
+    let mut parts: Vec<&str> = bare.split('.').collect();
+    if parts.len() >= 3 && parts.last() == Some(&"0") {
+        parts.pop();
+    }
+    if version.starts_with('v') {
+        format!("v{}", parts.join("."))
+    } else {
+        parts.join(".")
+    }
 }
 
 fn upgrade_name() -> String {
-    env_or("ICT_UPGRADE_NAME", "v6")
+    if let Some(name) = nonempty("ICT_UPGRADE_NAME").or_else(|| nonempty("TERP_UPGRADE_NAME")) {
+        return name;
+    }
+    plan_name_from_tag(&first_hop_version())
 }
 
 fn upgrade_repo() -> String {
-    env_or("ICT_UPGRADE_REPO", "registry.terp.network/terp-core")
+    nonempty("ICT_UPGRADE_REPO")
+        .or_else(|| nonempty("TERP_UPGRADE_REPO"))
+        .unwrap_or_else(terp_image_repo)
+}
+
+fn final_version() -> String {
+    let tag = terp_image_version();
+    refuse_retired("TERP_IMAGE_VERSION", &tag);
+    tag
+}
+
+/// Image that contains the handler for [`upgrade_name`]. When this differs
+/// from [`final_version`], the chain is expected to arm the next plan and halt
+/// again (v6.3 arms v6.4). The second swap uses `TERP_IMAGE_VERSION`.
+fn first_hop_version() -> String {
+    let tag = nonempty("TERP_UPGRADE_MID")
+        .or_else(|| nonempty("ICT_UPGRADE_MID"))
+        .or_else(|| nonempty("ICT_UPGRADE_TO"))
+        .or_else(|| nonempty("TERP_UPGRADE_TO"))
+        .unwrap_or_else(final_version);
+    refuse_retired("TERP_UPGRADE_MID", &tag);
+    tag
 }
 
 fn upgrade_version() -> String {
-    std::env::var("ICT_UPGRADE_TO")
-        .ok()
-        .filter(|s| !s.is_empty())
-        .unwrap_or_else(terp_image_version)
+    first_hop_version()
 }
 
 fn modify_v6_genesis(_cfg: &ChainConfig, raw: Vec<u8>) -> IctResult<Vec<u8>> {
@@ -115,9 +171,15 @@ async fn query_json(chain: &CosmosChain, args: &[&str]) -> Result<serde_json::Va
     let mut cmd = vec!["query"];
     cmd.extend_from_slice(args);
     cmd.extend_from_slice(&["--output", "json"]);
-    let out = chain.exec(&cmd, &[]).await?;
+    let out = chain.chain_exec(&cmd).await?;
     if out.exit_code != 0 {
-        return Err(format!("query {:?} failed: {}", args, out.stderr_str()).into());
+        return Err(format!(
+            "query {:?} failed: stdout={} stderr={}",
+            args,
+            out.stdout_str().trim(),
+            out.stderr_str().trim()
+        )
+        .into());
     }
     Ok(parse_query_response(&out)?)
 }
@@ -363,6 +425,53 @@ async fn workflow_iavl(chain: &CosmosChain) -> Result<(), Box<dyn std::error::Er
     Ok(())
 }
 
+async fn swap_image(chain: &mut CosmosChain, version: &str) -> Result<(), Box<dyn std::error::Error>> {
+    tokio::time::sleep(std::time::Duration::from_secs(2)).await;
+    println!("\n--- Stopping nodes for upgrade ---");
+    chain.stop_all_nodes().await?;
+    let repo = upgrade_repo();
+    println!("\n--- Upgrading image to {repo}:{version} ---");
+    chain.upgrade_version(&repo, version);
+    println!("\n--- Starting upgraded nodes ---");
+    chain.start_all_nodes().await?;
+    Ok(())
+}
+
+/// `target` set: return once height reaches it or RPC dies.
+/// `target` unset: return once height stops advancing or RPC dies (armed next plan).
+async fn wait_until_halt(
+    chain: &CosmosChain,
+    target: Option<u64>,
+) -> Result<(), Box<dyn std::error::Error>> {
+    let mut last = chain.height().await.unwrap_or(0);
+    let mut frozen = 0u32;
+    for _ in 0..180 {
+        tokio::time::sleep(std::time::Duration::from_secs(1)).await;
+        match chain.height().await {
+            Ok(h) if target.is_some_and(|want| h >= want) => {
+                println!("Chain reached halt height: {h}");
+                return Ok(());
+            }
+            Ok(h) if h == last => {
+                frozen += 1;
+                if target.is_none() && frozen >= 20 {
+                    println!("Chain height frozen at {h}");
+                    return Ok(());
+                }
+            }
+            Ok(h) => {
+                last = h;
+                frozen = 0;
+            }
+            Err(_) => {
+                println!("Chain halted (RPC error — expected at halt height).");
+                return Ok(());
+            }
+        }
+    }
+    Err(format!("timed out waiting for halt (last height {last})").into())
+}
+
 async fn run_test(chain: &mut CosmosChain, num_validators: usize) -> Result<(), Box<dyn std::error::Error>> {
     let plan = upgrade_name();
 
@@ -412,35 +521,17 @@ async fn run_test(chain: &mut CosmosChain, num_validators: usize) -> Result<(), 
     println!("Proposal PASSED.");
 
     println!("\n--- Waiting for chain halt at height {halt_height} ---");
-    loop {
-        tokio::time::sleep(std::time::Duration::from_secs(1)).await;
-        match chain.height().await {
-            Ok(h) if h >= halt_height => {
-                println!("Chain reached halt height: {h}");
-                break;
-            }
-            Ok(_) => {}
-            Err(_) => {
-                println!("Chain halted (RPC error — expected at halt height).");
-                break;
-            }
-        }
+    wait_until_halt(chain, Some(halt_height)).await?;
+
+    let hop = first_hop_version();
+    let done = final_version();
+    swap_image(chain, &hop).await?;
+
+    if hop != done {
+        println!("\n--- Waiting for the armed next plan to halt before {done} ---");
+        wait_until_halt(chain, None).await?;
+        swap_image(chain, &done).await?;
     }
-
-    tokio::time::sleep(std::time::Duration::from_secs(3)).await;
-    let halted_height = chain.height().await.unwrap_or(halt_height);
-    println!("Confirmed height at halt: {halted_height}");
-
-    println!("\n--- Stopping nodes for upgrade ---");
-    chain.stop_all_nodes().await?;
-
-    let repo = upgrade_repo();
-    let to = upgrade_version();
-    println!("\n--- Upgrading image to {repo}:{to} ---");
-    chain.upgrade_version(&repo, &to);
-
-    println!("\n--- Starting upgraded nodes ---");
-    chain.start_all_nodes().await?;
 
     println!("\n--- Verifying post-upgrade block production ---");
     let post_upgrade_height = chain.height().await?;
@@ -453,7 +544,7 @@ async fn run_test(chain: &mut CosmosChain, num_validators: usize) -> Result<(), 
         final_height - post_upgrade_height
     );
     if final_height < post_upgrade_height + BLOCKS_AFTER_UPGRADE {
-        return Err("chain did not produce enough blocks after v6".into());
+        return Err("chain did not produce enough blocks after upgrade".into());
     }
 
     run_workflows(chain, UpgradePhase::Post, pre_ibc.as_ref(), "testuser").await?;
@@ -465,9 +556,13 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
     tracing_subscriber::fmt().with_env_filter("info").init();
 
     let from = start_version();
-    let to = upgrade_version();
+    let hop = first_hop_version();
+    let done = final_version();
     let plan = upgrade_name();
-    println!("=== Terp chain upgrade ({from} → {to}, plan `{plan}`) ===\n");
+    if from == hop {
+        panic!("TERP_UPGRADE_FROM={from} already is the image that handles plan {plan}");
+    }
+    println!("=== Terp chain upgrade ({from} → {hop} → {done}, plan `{plan}`) ===\n");
     println!("sdk 0.54 + ibc-go v11.1 + 08-wasm v11.1.0 + zk-wasmvm\n");
 
     let runtime = IctRuntime::Docker(DockerConfig::default())
@@ -481,12 +576,14 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
     let mut chain = CosmosChain::new(config, num_validators, num_full_nodes, runtime);
 
     println!(
-        "Chain: {} (from image: {}:{}, to: {}:{})",
+        "Chain: {} (from {}:{}, hop {}:{}, final {}:{})",
         chain.chain_id(),
         upgrade_repo(),
         from,
         upgrade_repo(),
-        to
+        hop,
+        upgrade_repo(),
+        done
     );
     println!("Validators: {num_validators}");
 
@@ -499,7 +596,7 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
 
     match result {
         Ok(()) => {
-            println!("Chain upgrade test PASSED ({from} → {to}, plan `{plan}`)");
+            println!("Chain upgrade test PASSED ({from} → {hop} → {done}, plan `{plan}`)");
             Ok(())
         }
         Err(e) => {

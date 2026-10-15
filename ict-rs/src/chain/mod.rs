@@ -294,7 +294,13 @@ pub trait Chain: Send + Sync {
         cmd.push("--home".to_string());
         cmd.push(home);
         let cmd_refs: Vec<&str> = cmd.iter().map(|s| s.as_str()).collect();
-        self.exec(&cmd_refs, &[]).await
+        // ChainConfig.env must reach `tx` ValidateBasic. exec_cmd is not this path.
+        let env_owned = self.config().env.clone();
+        let env_refs: Vec<(&str, &str)> = env_owned
+            .iter()
+            .map(|(k, v)| (k.as_str(), v.as_str()))
+            .collect();
+        self.exec(&cmd_refs, &env_refs).await
     }
 
     /// Build default [`TxOptions`] from this chain's config.

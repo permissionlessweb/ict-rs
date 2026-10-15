@@ -1,12 +1,10 @@
-//! Offline marketplace inventory delta (no Docker).
-//!
-//! Mirrors loyalty_rewards merkle: SKU stock leaves → root_1, stock mutation →
-//! root_2, inclusion proof still verifies against the new root.
+//! Marketplace inventory merkle, checked after a terp-core image is producing blocks.
 //!
 //! ```sh
-//! cargo run -p ict-rs --example marketplace_inventory_offline
+//! cargo run -p ict-rs --example marketplace_inventory_offline --features docker,terp,testing
 //! ```
 
+use ict_rs::chain::Chain;
 use sha2::{Digest, Sha256};
 
 fn sha256(data: &[u8]) -> [u8; 32] {
@@ -82,7 +80,32 @@ fn sku_leaf(sku: &str, stock: u64, unit_price: u128) -> [u8; 32] {
     sha256(format!("{sku}|{stock}|{unit_price}").as_bytes())
 }
 
+fn boot_terp() {
+    if std::env::var("ICT_MOCK").ok().as_deref() == Some("1") {
+        panic!("marketplace_inventory_offline uses the terp-core image. Unset ICT_MOCK.");
+    }
+    let rt = tokio::runtime::Builder::new_current_thread()
+        .enable_all()
+        .build()
+        .expect("runtime");
+    rt.block_on(async {
+        let mut tc = ict_rs::testing::setup_chain(
+            "marketplace-inventory",
+            ict_rs::testing::TestEnv::terp_config(),
+        )
+        .await
+        .expect("terp chain");
+        let height = tc.chain.height().await.expect("height");
+        println!("terp image height {height}");
+        tc.cleanup().await.expect("cleanup");
+        if height == 0 {
+            panic!("chain height is 0");
+        }
+    });
+}
+
 fn main() {
+    boot_terp();
     let mut inventory = vec![
         ("SKU-TEA", 40u64, 1_000u128),
         ("SKU-MUG", 12, 2_500),

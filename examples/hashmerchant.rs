@@ -202,10 +202,21 @@ async fn grpc_send(addr: &str, data: &[u8]) -> Result<(), Box<dyn std::error::Er
 // ---------------------------------------------------------------------------
 
 fn parse_state_root(block_json: &str) -> Option<Vec<u8>> {
-    let v: serde_json::Value = serde_json::from_str(block_json).ok()?;
-    let sr = v["stateRoot"].as_str()?;
-    let sr = sr.strip_prefix("0x").unwrap_or(sr);
-    hex::decode(sr).ok()
+    let decode = |sr: &str| hex::decode(sr.strip_prefix("0x").unwrap_or(sr)).ok();
+    if let Ok(v) = serde_json::from_str::<serde_json::Value>(block_json.trim()) {
+        if let Some(sr) = v
+            .get("stateRoot")
+            .or_else(|| v.pointer("/result/stateRoot"))
+            .and_then(|s| s.as_str())
+        {
+            return decode(sr);
+        }
+    }
+    let key = "\"stateRoot\":\"";
+    let idx = block_json.find(key)?;
+    let start = idx + key.len();
+    let end = block_json[start..].find('"')?;
+    decode(&block_json[start..start + end])
 }
 
 fn parse_deployed_address(output: &str) -> Option<String> {
@@ -405,7 +416,12 @@ async fn run_test(
 
     let pre_height = anvil.height().await?;
     let pre_block = anvil.get_block_by_number(pre_height).await?;
-    let pre_state_root = parse_state_root(&pre_block).expect("pre stateRoot");
+    let pre_state_root = parse_state_root(&pre_block).ok_or_else(|| {
+        format!(
+            "pre stateRoot missing in {}",
+            pre_block.chars().take(300).collect::<String>()
+        )
+    })?;
 
     anvil.exec_cast(&[
         "send", "--private-key", &acct0.private_key,

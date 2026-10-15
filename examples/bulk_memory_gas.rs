@@ -228,7 +228,7 @@ async fn run_test(chain: &mut CosmosChain) -> Result<(), Box<dyn std::error::Err
     .await?;
     if store.code != Some(0) {
         return Err(format!(
-            "wasm store failed (need BuiltInCapabilities bulk_memory): code={:?} log={}",
+            "wasm store failed in the stack limiter (call_indirect table index), before the bulk_memory capability check: code={:?} log={}",
             store.code,
             tx_raw_log(&store.stdout) + &store.stderr
         )

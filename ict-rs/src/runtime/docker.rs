@@ -110,13 +110,16 @@ impl RuntimeBackend for DockerBackend {
         let mut port_bindings: HashMap<String, Option<Vec<BollardPortBinding>>> = HashMap::new();
         let mut exposed_ports: HashMap<String, HashMap<(), ()>> = HashMap::new();
 
+        // Default stays 0.0.0.0. Headstash e2e sets ICT_PUBLISH_HOST=127.0.0.1.
+        let publish_host =
+            std::env::var("ICT_PUBLISH_HOST").unwrap_or_else(|_| "0.0.0.0".to_string());
         for pb in &opts.ports {
             let container_key = format!("{}/{}", pb.container_port, pb.protocol);
             exposed_ports.insert(container_key.clone(), HashMap::new());
             port_bindings.insert(
                 container_key,
                 Some(vec![BollardPortBinding {
-                    host_ip: Some("0.0.0.0".to_string()),
+                    host_ip: Some(publish_host.clone()),
                     host_port: Some(pb.host_port.to_string()),
                 }]),
             );

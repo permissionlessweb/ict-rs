@@ -1,0 +1,92 @@
+[package]
+name = "ict-rs-cw-orch"
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+description = "Bridge between ict-rs and cw-orchestrator: spawn local chains via ict-rs, interact via cw-orch Daemon"
+
+[features]
+default = []
+oline = ["dep:o-line-sdl"]
+docker = []
+zakura = ["ict-rs/zakura"]
+dregg-node = ["ict-rs/dregg-node"]
+ethereum = ["ict-rs/ethereum"]
+bitcoin = ["ict-rs/bitcoin"]
+svg-mint-product = []
+hashmarket = ["dep:hash-market"]
+
+[dependencies]
+cw-orch-core = { git = "https://github.com/permissionlessweb/cw-orchestrator", rev = "ec4d693aad80ee70ddbd77c3b78c9807bedb6be0", default-features = false, features = ["terp"] }
+cw-orch-daemon = { git = "https://github.com/permissionlessweb/cw-orchestrator", rev = "ec4d693aad80ee70ddbd77c3b78c9807bedb6be0" }
+ict-rs = { path = "../ict-rs", features = ["docker", "terp", "testing"] }
+halo2_proofs = { package = "zakura-halo2-proofs", path = "../../zakura-common/crates/halo2_proofs", default-features = false, features = ["batch", "multicore"] }
+hash-market = { path = "../../terp-rs/tools/hash-market", optional = true, default-features = false, features = ["onboard"] }
+dregg = { path = "../../terp-rs/tools/svg-mint/crates/dregg" }
+o-line-sdl = { path = "../../o-line", features = ["interface", "testing"], optional = true }
+thiserror = "2"
+tokio = { version = "1", features = ["rt", "rt-multi-thread", "macros"] }
+tracing = "0.1"
+tracing-subscriber = { version = "0.3", features = ["env-filter"] }
+serde_json = "1"
+sha2 = "0.10"
+rustls = { version = "0.23", default-features = false, features = ["ring", "std"] }
+cw-orch = { git = "https://github.com/permissionlessweb/cw-orchestrator", rev = "ec4d693aad80ee70ddbd77c3b78c9807bedb6be0", default-features = false, features = ["daemon"] }
+cw-orch-traits = { git = "https://github.com/permissionlessweb/cw-orchestrator", rev = "ec4d693aad80ee70ddbd77c3b78c9807bedb6be0" }
+prost = "0.14.1"
+prost-types = "0.14.1"
+
+[[example]]
+name = "lean_production_e2e"
+required-features = ["docker"]
+
+[[example]]
+name = "lean_testnet_gates"
+required-features = ["docker"]
+
+[[example]]
+name = "lean_ssle_load"
+required-features = ["docker"]
+
+[[example]]
+name = "svg_mint_local_prod"
+path = "../../terp-rs/tools/svg-mint/e2e/examples/svg_mint_local_prod.rs"
+required-features = ["docker", "zakura", "dregg-node", "ethereum", "bitcoin", "svg-mint-product", "hashmarket"]
+
+[[example]]
+name = "svg_mint_load_storm"
+required-features = ["docker", "zakura", "dregg-node", "ethereum", "bitcoin", "hashmarket"]
+
+[[example]]
+name = "svg_mint_base_local"
+required-features = ["docker", "ethereum"]
+
+[[example]]
+name = "svg_mint_migrate_runtime"
+
+[[example]]
+name = "svg_mint_cw_orch_runtime"
+
+[[example]]
+name = "hashmerchant_authz_bootstrap"
+required-features = ["hashmarket"]
+
+[[example]]
+name = "svg_mint_update_svg_code"
+
+[[example]]
+name = "itl_cashapp_local_prod"
+required-features = ["docker"]
+
+[[example]]
+name = "itl_consume_e2e"
+required-features = ["docker", "hashmarket"]
+
+[[example]]
+name = "osmosis_twap_registry"
+required-features = ["docker"]
+
+[[example]]
+name = "itl_frost_local_prod"
+required-features = ["docker"]
+

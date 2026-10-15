@@ -1,13 +1,13 @@
-//! Curated zk-jwt elevation of loyalty_rewards (design + contract path; chain optional).
+//! Loyalty zk-jwt public inputs, checked after a terp-core image is producing blocks.
 //!
-//! Offline: SHA-256 merkle of loyalty points + structural zk-jwt public-input
-//! layout used by terp-zkjwt (nullifier || claim_commitment || msg_bind).
-//! Does not require Docker or a linked host circuit.
+//! SHA-256 merkle of loyalty points plus the terp-zkjwt layout
+//! nullifier || claim_commitment || msg_bind.
 //!
 //! ```sh
-//! cargo run -p ict-rs --example loyalty_rewards_zkjwt
+//! cargo run -p ict-rs --example loyalty_rewards_zkjwt --features docker,terp,testing
 //! ```
 
+use ict_rs::chain::Chain;
 use sha2::{Digest, Sha256};
 
 fn sha256(data: &[u8]) -> [u8; 32] {
@@ -51,7 +51,32 @@ fn zkjwt_public_inputs(nullifier: &[u8; 32], claim: &[u8; 32], msg_bind: &[u8; 3
     out
 }
 
+fn boot_terp() {
+    if std::env::var("ICT_MOCK").ok().as_deref() == Some("1") {
+        panic!("loyalty_rewards_zkjwt uses the terp-core image. Unset ICT_MOCK.");
+    }
+    let rt = tokio::runtime::Builder::new_current_thread()
+        .enable_all()
+        .build()
+        .expect("runtime");
+    rt.block_on(async {
+        let mut tc = ict_rs::testing::setup_chain(
+            "loyalty-zkjwt",
+            ict_rs::testing::TestEnv::terp_config(),
+        )
+        .await
+        .expect("terp chain");
+        let height = tc.chain.height().await.expect("height");
+        println!("terp image height {height}");
+        tc.cleanup().await.expect("cleanup");
+        if height == 0 {
+            panic!("chain height is 0");
+        }
+    });
+}
+
 fn main() {
+    boot_terp();
     let members = [
         ("jane", 875u64),
         ("bob", 1_525),

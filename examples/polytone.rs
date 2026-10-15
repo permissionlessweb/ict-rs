@@ -14,10 +14,10 @@
 //! ```
 //!
 //! Ensure the polytone contract wasm files exist:
-//! - `terp-core/tests/interchaintest/contracts/polytone_note.wasm`
-//! - `terp-core/tests/interchaintest/contracts/polytone_voice.wasm`
-//! - `terp-core/tests/interchaintest/contracts/polytone_proxy.wasm`
-//! - `terp-core/tests/interchaintest/contracts/polytone_tester.wasm`
+//! - `artifacts/polytone_note.wasm`
+//! - `artifacts/polytone_voice.wasm`
+//! - `artifacts/polytone_proxy.wasm`
+//! - `artifacts/polytone_tester.wasm`
 //!
 //! ```sh
 //! cargo run --example polytone --features docker
@@ -29,10 +29,10 @@ use std::path::PathBuf;
 use ict_rs::prelude::*;
 
 /// Contract wasm files (relative to the terp-core repo root).
-const NOTE_WASM: &str = "tests/interchaintest/contracts/polytone_note.wasm";
-const VOICE_WASM: &str = "tests/interchaintest/contracts/polytone_voice.wasm";
-const PROXY_WASM: &str = "tests/interchaintest/contracts/polytone_proxy.wasm";
-const TESTER_WASM: &str = "tests/interchaintest/contracts/polytone_tester.wasm";
+const NOTE_WASM: &str = "artifacts/polytone_note.wasm";
+const VOICE_WASM: &str = "artifacts/polytone_voice.wasm";
+const PROXY_WASM: &str = "artifacts/polytone_proxy.wasm";
+const TESTER_WASM: &str = "artifacts/polytone_tester.wasm";
 
 /// Docker image to use. Override with TERP_IMAGE env var.
 fn terp_image() -> DockerImage {
@@ -66,10 +66,10 @@ fn terp_chain_config(chain_id: &str) -> ChainConfig {
     }
 }
 
-/// Directory that contains `tests/interchaintest/contracts/`.
+/// Directory that contains `artifacts/polytone_note.wasm`.
 /// Prefers runtime env (CI artifact jobs) over compile-time CARGO_MANIFEST_DIR.
 fn resolve_terp_core() -> Result<PathBuf, Box<dyn std::error::Error>> {
-    let marker = "tests/interchaintest/contracts/polytone_note.wasm";
+    let marker = "artifacts/polytone_note.wasm";
     let mut cands = Vec::new();
     for key in ["TERP_CORE", "GITHUB_WORKSPACE"] {
         if let Ok(v) = std::env::var(key) {
@@ -95,7 +95,7 @@ fn resolve_terp_core() -> Result<PathBuf, Box<dyn std::error::Error>> {
             return Ok(p);
         }
     }
-    Err("Cannot find terp-core (missing tests/interchaintest/contracts/*.wasm). Set TERP_CORE.".into())
+    Err("Cannot find terp-core (missing artifacts/polytone_note.wasm). Set TERP_CORE.".into())
 }
 
 /// Get a key's bech32 address from a chain.

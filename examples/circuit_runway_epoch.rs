@@ -11,9 +11,6 @@
 //! Image: `make build-zk-local` → `terpnetwork/terp-core:local-zk`
 //!
 //! ```sh
-//! # mock smoke (pay/query only)
-//! ICT_MOCK=1 cargo run -p ict-rs --example circuit_runway_epoch --features docker,testing,terp
-//! # live 3-val set
 //! cargo run -p ict-rs --example circuit_runway_epoch --features docker,testing,terp
 //! ```
 
@@ -202,33 +199,16 @@ async fn run_docker(chain: &mut CosmosChain) -> Result<(), Box<dyn std::error::E
     Ok(())
 }
 
-async fn run_mock(chain: &mut CosmosChain) -> Result<(), Box<dyn std::error::Error>> {
-    let tx = chain.pay_circuit_deposit("validator-0", 1).await?;
-    println!("pay-circuit-deposit tx={} height={}", tx.tx_hash, tx.height);
-    let q = chain
-        .query_circuit_deposit("terp1qqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqq6m2qj3")
-        .await?;
-    println!("circuit-deposit query: {q}");
-    if q["covered"] != true {
-        return Err("expected covered=true from mock query".into());
-    }
-    println!("circuit_runway_epoch mock ok (use Docker for 3-val join/leave)");
-    Ok(())
-}
-
 #[tokio::main]
 async fn main() -> Result<(), Box<dyn std::error::Error>> {
-    let mock = std::env::var("ICT_MOCK").ok().as_deref() == Some("1");
-    let runtime: Arc<dyn RuntimeBackend> = if mock {
-        Arc::new(MockRuntime::new())
-    } else {
-        IctRuntime::Docker(DockerConfig::default())
-            .into_backend()
-            .await?
-    };
+    if std::env::var("ICT_MOCK").ok().as_deref() == Some("1") {
+        return Err("circuit_runway_epoch uses the terp-core image. Unset ICT_MOCK.".into());
+    }
+    let runtime: Arc<dyn RuntimeBackend> = IctRuntime::Docker(DockerConfig::default())
+        .into_backend()
+        .await?;
 
-    let nvals = if mock { 1 } else { NUM_VALIDATORS };
-    let mut chain = CosmosChain::new(terp_config(), nvals, 0, runtime);
+    let mut chain = CosmosChain::new(terp_config(), NUM_VALIDATORS, 0, runtime);
     let ctx = TestContext {
         test_name: "circuit-runway-epoch".to_string(),
         network_id: "ict-circuit-runway-epoch".to_string(),
@@ -236,11 +216,7 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
     chain.initialize(&ctx).await?;
     chain.start(&[]).await?;
 
-    let result = if mock {
-        run_mock(&mut chain).await
-    } else {
-        run_docker(&mut chain).await
-    };
+    let result = run_docker(&mut chain).await;
 
     if let Err(e) = chain.stop().await {
         eprintln!("cleanup: {e}");

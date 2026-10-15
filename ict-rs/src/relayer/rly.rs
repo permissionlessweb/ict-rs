@@ -42,7 +42,9 @@ impl RelayerCommander for CosmosRlyCommander {
         DockerImage {
             repository: "ghcr.io/cosmos/relayer".to_string(),
             version: "v2.5.2".to_string(),
-            uid_gid: Some("100:1000".to_string()),
+            // The image USER is 100:1000 and the named volume is root-owned.
+            // That user cannot create the chain config directory. Run as root.
+            uid_gid: Some("0:0".to_string()),
         }
     }
 

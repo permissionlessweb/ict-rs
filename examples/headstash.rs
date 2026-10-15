@@ -49,10 +49,8 @@ const DENOM: &str = "uterp";
 const BECH32_PREFIX: &str = "terp";
 
 /// Relative paths (from ZK_ROOT) to pre-compiled wasm contracts.
-const HEADSTASH_WASM_REL: &str =
-    "terp-core/tests/interchaintest/contracts/cw_headstash.wasm";
-const MANIFOLD_WASM_REL: &str =
-    "terp-core/tests/interchaintest/contracts/cw_headstash_manifold.wasm";
+const HEADSTASH_WASM_REL: &str = "terp-core/artifacts/cw_headstash.wasm";
+const MANIFOLD_WASM_REL: &str = "terp-core/artifacts/cw_headstash_manifold.wasm";
 
 /// Container-side scratch paths for uploaded artifacts.
 const HS_WASM: &str = "/tmp/cw_headstash.wasm";
@@ -555,9 +553,9 @@ async fn run_test(chain: &mut CosmosChain) -> Result<(), Box<dyn std::error::Err
 
     match mode.as_str() {
         "mock" => {
-            println!("HONEST_PATH=mock_labeled claim_mock_verify=true product_settle=false");
-            println!("Lab path finished. This is not a real zk-headstash claim.");
-            Ok(())
+            println!("HONEST_PATH=mock_removed");
+            println!("Mock success was removed. Use example headstash_local_e2e.");
+            Err(skip_err("mock_removed"))
         }
         "real" => {
             println!("HONEST_PATH=none skip_reason=real_claim_not_wired");

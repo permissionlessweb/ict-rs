@@ -48,7 +48,7 @@ bench:
 terp_core_dir := env("TERP_CORE_DIR", home_directory() / "abstract/terp-core")
 loyalty_verifier_dir := terp_core_dir / "tests/tsh/hashmerchant/contracts/loyalty-verifier"
 
-# Build loyalty-verifier contract wasm via optimizer and copy to interchaintest/contracts/
+# Build loyalty-verifier contract wasm via optimizer. Copy the blob to artifacts/loyalty_verifier.wasm.
 wasm:
     cd "{{loyalty_verifier_dir}}" && just wasm
 

@@ -49,25 +49,24 @@ pub fn query(_deps: Deps, _env: Env, _msg: QueryMsg) -> StdResult<Binary> {
 }
 
 fn bulk_copy(n: u32) -> StdResult<Response> {
-    let dest: u32 = 16;
-    let src: u32 = 0;
+    // Address 0 is a null pointer and rustc rejects the copy. The length is what the meter sees.
+    let dest: u32 = 64;
+    let src: u32 = 8;
     let n = core::hint::black_box(n);
+    let observed: u8;
     #[cfg(target_arch = "wasm32")]
     unsafe {
-        core::arch::asm!(
-            "local.get {dest}",
-            "local.get {src}",
-            "local.get {len}",
-            "memory.copy 0, 0",
-            dest = in(local) dest,
-            src = in(local) src,
-            len = in(local) n,
-            options(nostack),
-        );
+        core::ptr::copy_nonoverlapping(src as *const u8, dest as *mut u8, n as usize);
+        observed = core::ptr::read_volatile(dest as *const u8);
+    }
+    #[cfg(not(target_arch = "wasm32"))]
+    {
+        observed = 0;
     }
     Ok(Response::new()
         .add_attribute("op", "copy")
-        .add_attribute("n", n.to_string()))
+        .add_attribute("n", n.to_string())
+        .add_attribute("b", (observed as u32).to_string()))
 }
 
 fn bulk_fill(n: u32) -> StdResult<Response> {

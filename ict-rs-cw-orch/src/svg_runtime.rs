@@ -132,8 +132,34 @@ pub fn deploy_hopalong_minter(
     })
 }
 
+/// Upload `cw_infuser.wasm` and instantiate it against the stored cw721 code id.
+pub fn instantiate_infuser(
+    daemon: &Daemon,
+    cw721_code_id: u64,
+) -> Result<String, String> {
+    let owner = daemon.sender_addr().to_string();
+    let up = daemon
+        .upload(&InfuserWasm)
+        .map_err(|e| format!("cw-infuser upload (cw-orch): {e}"))?;
+    let code_id = up
+        .uploaded_code_id()
+        .map_err(|e| format!("infuser code_id: {e}"))?;
+    let init = serde_json::json!({
+        "contract_owner": owner,
+        "owner_fee": "0",
+        "cw721_code_id": cw721_code_id
+    });
+    let inst = daemon
+        .instantiate(code_id, &init, Some("cw-infuser"), None, &[])
+        .map_err(|e| format!("cw-infuser instantiate (cw-orch): {e}"))?;
+    inst.instantiated_contract_address()
+        .map(|a| a.to_string())
+        .map_err(|e| format!("infuser addr: {e}"))
+}
+
 struct SvgWasm;
 struct MinterWasm;
+struct InfuserWasm;
 
 fn artifact_wasm(name: &str) -> WasmPath {
     let p = Path::new(&std::env::var("ARTIFACTS_DIR").expect("ARTIFACTS_DIR")).join(name);
@@ -152,6 +178,15 @@ impl Uploadable for SvgWasm {
 impl Uploadable for MinterWasm {
     fn wasm(_chain: &ChainInfoOwned) -> WasmPath {
         artifact_wasm("cw_svg_minter.wasm")
+    }
+    fn wrapper() -> Box<dyn MockContract<Empty, Empty>> {
+        unimplemented!("svg mint uses chain upload, not mock wrapper")
+    }
+}
+
+impl Uploadable for InfuserWasm {
+    fn wasm(_chain: &ChainInfoOwned) -> WasmPath {
+        artifact_wasm("cw_infuser.wasm")
     }
     fn wrapper() -> Box<dyn MockContract<Empty, Empty>> {
         unimplemented!("svg mint uses chain upload, not mock wrapper")

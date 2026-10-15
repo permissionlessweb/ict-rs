@@ -109,7 +109,7 @@ mod docker_e2e {
 
     fn wasm_path() -> PathBuf {
         PathBuf::from(env!("CARGO_MANIFEST_DIR"))
-            .join("../../../tests/interchaintest/contracts/ibchooks_counter.wasm")
+            .join("../../../artifacts/ibchooks_counter.wasm")
     }
 
     fn app_hash(status: &serde_json::Value) -> Option<String> {
@@ -1662,7 +1662,7 @@ done
 
     fn proxy_wasm_path() -> PathBuf {
         PathBuf::from(env!("CARGO_MANIFEST_DIR"))
-            .join("../../../tests/interchaintest/contracts/polytone_proxy.wasm")
+            .join("../../../artifacts/polytone_proxy.wasm")
     }
 
     async fn run_submsg_reply() -> Result<(), String> {
@@ -1932,7 +1932,7 @@ done
 
     fn empty_sudo_wasm_path() -> PathBuf {
         PathBuf::from(env!("CARGO_MANIFEST_DIR"))
-            .join("../../../tests/interchaintest/contracts/empty_sudo.wasm")
+            .join("../../../artifacts/empty_sudo.wasm")
     }
 
     /// VE genesis for the empty-sudo chain (same oracle-eth shape as the

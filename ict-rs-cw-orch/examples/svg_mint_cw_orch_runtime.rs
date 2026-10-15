@@ -15,7 +15,7 @@ use cw_orch_core::environment::{ChainInfoOwned, ChainKind, NetworkInfoOwned};
 use ict_rs::cosmos::interchain::wait_for_blocks;
 use ict_rs::prelude::*;
 use ict_rs_cw_orch::svg_runtime::{
-    deploy_hopalong_minter, mint_via_daemon, native_svg_mint_msg,
+    deploy_hopalong_minter, instantiate_infuser, mint_via_daemon, native_svg_mint_msg,
 };
 use ict_rs_cw_orch::daemon_builder_from_chain;
 use serde_json::json;
@@ -29,7 +29,17 @@ fn artifacts_dir() -> PathBuf {
     if let Ok(p) = std::env::var("SVG_MINT_ARTIFACTS") {
         return PathBuf::from(p);
     }
-    PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("../../cw-infuser/artifacts")
+    let marker = "crates/terp-rs/artifacts/cw721_svg.wasm";
+    let mut dir = PathBuf::from(env!("CARGO_MANIFEST_DIR"));
+    for _ in 0..8 {
+        if dir.join(marker).is_file() {
+            return dir.join("crates/terp-rs/artifacts");
+        }
+        if !dir.pop() {
+            break;
+        }
+    }
+    PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("../../terp-rs/artifacts")
 }
 
 fn mainnet_requested() -> bool {
@@ -101,8 +111,10 @@ fn mint_existing() {
 
 async fn spawn_local_and_mint() -> Result<serde_json::Value, Box<dyn std::error::Error>> {
     let arts = artifacts_dir();
-    if !arts.join("cw721_svg.wasm").is_file() || !arts.join("cw_svg_minter.wasm").is_file() {
-        return Err(format!("missing cw721_svg.wasm / cw_svg_minter.wasm under {}", arts.display()).into());
+    for name in ["cw721_svg.wasm", "cw_svg_minter.wasm", "cw_infuser.wasm"] {
+        if !arts.join(name).is_file() {
+            return Err(format!("missing {name} under {}", arts.display()).into());
+        }
     }
     let rt = Arc::new(DockerBackend::new(Default::default()).await?);
     let mut cfg = terp_chain_config();
@@ -144,12 +156,18 @@ async fn spawn_local_and_mint() -> Result<serde_json::Value, Box<dyn std::error:
             &native_svg_mint_msg(),
             &funds,
         )?;
+        let svg_code: u64 = d
+            .svg_code
+            .parse()
+            .map_err(|e| format!("svg code id: {e}"))?;
+        let infuser = instantiate_infuser(&daemon, svg_code)?;
         Ok(json!({
             "ok": true,
             "tx": tx,
             "sender": sender,
             "minter": d.minter_addr,
             "collection": d.collection_addr,
+            "infuser": infuser,
             "engine": "cw-orch",
             "mode": "local-spawn",
             "chain_id": "test-1",

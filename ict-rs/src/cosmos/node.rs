@@ -393,7 +393,12 @@ impl ChainNode {
         cmd.extend_from_slice(&["--home", &self.home_dir]);
 
         debug!(node = %self.hostname, cmd = ?cmd, "Executing command");
-        self.runtime.exec_in_container(id, &cmd, &[]).await
+        let env_refs: Vec<(&str, &str)> = self
+            .extra_env
+            .iter()
+            .map(|(k, v)| (k.as_str(), v.as_str()))
+            .collect();
+        self.runtime.exec_in_container(id, &cmd, &env_refs).await
     }
 
     /// Execute a `tx` subcommand with default tx options appended.

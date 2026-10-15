@@ -292,17 +292,23 @@ impl DockerRelayer {
 
         // Shell-escape single quotes: replace ' with '\'' (end quote, literal quote, resume quote)
         let escaped = text.replace('\'', "'\\''");
+        // ghcr.io/cosmos/relayer ships sh and tar, not mkdir or dirname.
+        let tar = ustar_bytes(path, content);
+        let mut octal = String::with_capacity(tar.len() * 4);
+        for byte in &tar {
+            octal.push_str(&format!("\\{byte:03o}"));
+        }
 
-        // Build: mkdir -p "$(dirname '<path>')" && printf '%s' '<escaped>' > '<path>'
-        let mut shell_cmd =
-            String::with_capacity(escaped.len() + path.len() * 2 + 80);
-        shell_cmd.push_str("mkdir -p \"$(dirname '");
+        let mut shell_cmd = String::with_capacity(escaped.len() + octal.len() + path.len() * 2 + 160);
+        shell_cmd.push_str("if command -v mkdir >/dev/null 2>&1 && command -v dirname >/dev/null 2>&1; then mkdir -p \"$(dirname '");
         shell_cmd.push_str(path);
         shell_cmd.push_str("')\" && printf '%s' '");
         shell_cmd.push_str(&escaped);
         shell_cmd.push_str("' > '");
         shell_cmd.push_str(path);
-        shell_cmd.push('\'');
+        shell_cmd.push_str("'; else printf '");
+        shell_cmd.push_str(&octal);
+        shell_cmd.push_str("' | tar -xf - -C /; fi");
 
         let cmd = vec![
             "sh".to_string(),
@@ -596,4 +602,42 @@ impl CloneWallet for Box<dyn Wallet> {
             mnemonic_phrase: self.mnemonic().to_string(),
         })
     }
+}
+
+fn put_octal(dst: &mut [u8], val: u64) {
+    let text = format!("{:0width$o}", val, width = dst.len() - 1);
+    let bytes = text.as_bytes();
+    let n = bytes.len().min(dst.len());
+    dst[..n].copy_from_slice(&bytes[..n]);
+}
+
+/// One-file ustar. `tar -x` creates the parent directories, so the relayer
+/// image does not need `mkdir`.
+fn ustar_bytes(path: &str, content: &[u8]) -> Vec<u8> {
+    let name = path.trim_start_matches('/');
+    assert!(name.len() <= 100, "relayer path exceeds ustar name field");
+    let mut hdr = [0u8; 512];
+    hdr[..name.len()].copy_from_slice(name.as_bytes());
+    put_octal(&mut hdr[100..108], 0o644);
+    put_octal(&mut hdr[108..116], 0);
+    put_octal(&mut hdr[116..124], 0);
+    put_octal(&mut hdr[124..136], content.len() as u64);
+    put_octal(&mut hdr[136..148], 0);
+    hdr[148..156].fill(b' ');
+    hdr[156] = b'0';
+    hdr[257..263].copy_from_slice(b"ustar\0");
+    hdr[263] = b'0';
+    hdr[264] = b'0';
+    let sum: u64 = hdr.iter().map(|b| u64::from(*b)).sum();
+    let chk = format!("{sum:06o}");
+    hdr[148..154].copy_from_slice(chk.as_bytes());
+    hdr[154] = 0;
+    hdr[155] = b' ';
+    let mut out = Vec::with_capacity(hdr.len() + content.len() + 1536);
+    out.extend_from_slice(&hdr);
+    out.extend_from_slice(content);
+    let pad = (512 - (content.len() % 512)) % 512;
+    out.extend(std::iter::repeat(0u8).take(pad));
+    out.extend(std::iter::repeat(0u8).take(1024));
+    out
 }

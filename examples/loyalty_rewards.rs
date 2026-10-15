@@ -307,13 +307,13 @@ fn find_wasm() -> PathBuf {
     // Try relative to CARGO_MANIFEST_DIR (ict-rs/ict-rs/)
     let manifest = std::path::Path::new(env!("CARGO_MANIFEST_DIR"));
 
-    // Path: ict-rs/ict-rs/../../../terp-core/tests/interchaintest/contracts/loyalty_verifier.wasm
     let candidates = [
-        manifest.join("../../terp-core/tests/interchaintest/contracts/loyalty_verifier.wasm"),
-        manifest.join("../../../terp-core/tests/interchaintest/contracts/loyalty_verifier.wasm"),
+        manifest.join("../../artifacts/loyalty_verifier.wasm"),
+        manifest.join("../../../artifacts/loyalty_verifier.wasm"),
+        manifest.join("../../../../artifacts/loyalty_verifier.wasm"),
         PathBuf::from(
             std::env::var("HOME").unwrap_or_default()
-                + "/abstract/terp-core/tests/interchaintest/contracts/loyalty_verifier.wasm",
+                + "/abstract/terp-core/artifacts/loyalty_verifier.wasm",
         ),
     ];
 

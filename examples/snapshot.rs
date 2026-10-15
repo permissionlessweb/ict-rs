@@ -261,7 +261,7 @@ async fn run_test(
 
     // Start the chain binary in background
     let start_cmd = format!(
-        "{} start --home {} > {}/chain.log 2>&1 &",
+        "nohup {} start --home {} > {}/chain.log 2>&1 &",
         full_node.chain_bin, fn_home, fn_home
     );
     full_node
@@ -278,9 +278,7 @@ async fn run_test(
     for attempt in 0..30 {
         tokio::time::sleep(std::time::Duration::from_secs(2)).await;
 
-        let status_output = full_node
-            .exec_raw(&["sh", "-c", "curl -sf http://127.0.0.1:26657/status 2>/dev/null || true"], &[])
-            .await;
+        let status_output = full_node.exec_cmd(&["status", "--output", "json"]).await;
 
         if let Ok(output) = status_output {
             let body = output.stdout_str();
