@@ -511,27 +511,29 @@ async fn run_flows(
     )
     .await;
 
-    let text = exec_text(
-        chain_a,
-        &claim_addr,
-        &claim_msg(&root, &nd, 1, &[0x26; 32], &[0x14; 32], &[0x15; 32], &[1, 2, 3, 4], 0),
-    )
-    .await;
-    if text.contains("recipient addr not represented") {
+    // Recipient is a public input. A different destination is a different
+    // instance, so the proof does not verify. That is the pass, not a gap.
+    let wrong_msg = if let Some(proof) = loaded.as_ref().filter(|p| host_proof(p)) {
+        proof_wrong_recipient_msg(proof)
+    } else {
+        claim_msg(&root, &nd, 1, &[0x26; 32], &[0x14; 32], &[0x15; 32], &[1, 2, 3, 4], 0)
+    };
+    let text = exec_text(chain_a, &claim_addr, &wrong_msg).await;
+    if text.contains("invalid headstash proof") {
         cases.push(Case {
             name: "wrong_address",
             status: "pass",
-            detail: clip(&text),
+            detail: format!(
+                "recipient is a public input, so a different destination fails proof verify: {}",
+                clip(&text)
+            ),
         });
-    } else if text.contains("circuit_id is 0")
-        || text.contains("invalid headstash proof")
-        || text.contains("requires zk-api")
-    {
+    } else if text.contains("recipient addr not represented") {
         cases.push(Case {
             name: "wrong_address",
-            status: "gap",
+            status: "fail",
             detail: format!(
-                "recipient check runs only after proof_instance_verify, so this submit stopped at the proof gate: {}",
+                "proof verified under a different destination: {}",
                 clip(&text)
             ),
         });
@@ -540,7 +542,7 @@ async fn run_flows(
             "wrong_address",
             "pass",
             &text,
-            &["recipient addr not represented"],
+            &["invalid headstash proof"],
         ));
     }
 
@@ -945,7 +947,7 @@ async fn append_queried_tx(chain: &CosmosChain, mut text: String) -> String {
         let _ = wait_for_blocks(chain, 2).await;
         if let Ok(queried) = chain.chain_exec(&query_refs).await {
             let got = format!("{}{}", queried.stdout_str(), queried.stderr_str());
-            if got.contains("\"code\"") {
+            if committed_tx(&got) {
                 text.push('\n');
                 text.push_str(&got);
                 return text;
@@ -976,9 +978,28 @@ async fn exec_text(chain: &CosmosChain, contract: &str, msg: &str) -> String {
     exec_text_with_gas(chain, contract, msg, "800000").await
 }
 
+fn committed_tx(body: &str) -> bool {
+    // A sync ack is height 0. An RPC "not found" body also contains "code".
+    // A committed tx has a non-zero height.
+    let mut rest = body;
+    let key = "\"height\":\"";
+    while let Some(at) = rest.find(key) {
+        let after = &rest[at + key.len()..];
+        let height: String = after.chars().take_while(|c| c.is_ascii_digit()).collect();
+        if !height.is_empty() && height != "0" {
+            return true;
+        }
+        rest = after;
+    }
+    false
+}
+
 async fn exec_text_with_gas(chain: &CosmosChain, contract: &str, msg: &str, gas: &str) -> String {
     // Fixed gas. `gas auto` simulates, and a rejecting claim exits with an empty
     // stdout. The wasm error is then only on stderr, which the JSON parser drops.
+    // Broadcast mode is sync, and chain_exec_tx_with does not wait for commit.
+    // Signing the next tx before the previous one is in a block reuses the
+    // account sequence. Poll the committed height, and retry a sequence mismatch.
     let args = [
         "tx".to_string(),
         "wasm".to_string(),
@@ -986,43 +1007,60 @@ async fn exec_text_with_gas(chain: &CosmosChain, contract: &str, msg: &str, gas:
         contract.to_string(),
         msg.to_string(),
     ];
-    let arg_refs: Vec<&str> = args.iter().map(String::as_str).collect();
-    let output = match chain
-        .chain_exec_tx_with(
-            &arg_refs,
-            chain.default_tx_opts().from("deployer").gas(gas),
-        )
-        .await
-    {
-        Ok(out) => out,
-        Err(e) => return e.to_string(),
-    };
-    let mut text = format!("{}{}", output.stdout_str(), output.stderr_str());
-    let hash = serde_json::from_str::<serde_json::Value>(output.stdout_str().trim())
-        .ok()
-        .and_then(|v| {
-            v.get("txhash")
-                .and_then(|h| h.as_str())
-                .map(|s| s.to_string())
-        })
-        .filter(|h| !h.is_empty());
-    if let Some(hash) = hash {
-        let _ = wait_for_blocks(chain, 2).await;
-        let query = [
-            "query".to_string(),
-            "tx".to_string(),
-            hash,
-            "--output".to_string(),
-            "json".to_string(),
-        ];
-        let query_refs: Vec<&str> = query.iter().map(String::as_str).collect();
-        if let Ok(queried) = chain.chain_exec(&query_refs).await {
-            text.push('\n');
-            text.push_str(&queried.stdout_str());
-            text.push_str(&queried.stderr_str());
+    let mut last = String::new();
+    for attempt in 0..3 {
+        let arg_refs: Vec<&str> = args.iter().map(String::as_str).collect();
+        let output = match chain
+            .chain_exec_tx_with(
+                &arg_refs,
+                chain.default_tx_opts().from("deployer").gas(gas),
+            )
+            .await
+        {
+            Ok(out) => out,
+            Err(e) => return e.to_string(),
+        };
+        let mut text = format!("{}{}", output.stdout_str(), output.stderr_str());
+        if text.contains("sequence mismatch") {
+            last = text;
+            if attempt < 2 {
+                let _ = wait_for_blocks(chain, 2).await;
+                continue;
+            }
+            return last;
         }
+        let hash = serde_json::from_str::<serde_json::Value>(output.stdout_str().trim())
+            .ok()
+            .and_then(|v| {
+                v.get("txhash")
+                    .and_then(|h| h.as_str())
+                    .map(|s| s.to_string())
+            })
+            .filter(|h| !h.is_empty());
+        if let Some(hash) = hash {
+            let query = [
+                "query".to_string(),
+                "tx".to_string(),
+                hash,
+                "--output".to_string(),
+                "json".to_string(),
+            ];
+            let query_refs: Vec<&str> = query.iter().map(String::as_str).collect();
+            for _ in 0..24 {
+                let _ = wait_for_blocks(chain, 2).await;
+                if let Ok(queried) = chain.chain_exec(&query_refs).await {
+                    let got = format!("{}{}", queried.stdout_str(), queried.stderr_str());
+                    if committed_tx(&got) {
+                        text.push('\n');
+                        text.push_str(&got);
+                        return text;
+                    }
+                }
+            }
+        }
+        return text;
     }
-    text
+    last
 }
 
 fn classify_reject(name: &'static str, want: &'static str, text: &str, needles: &[&str]) -> Case {
@@ -1261,6 +1299,38 @@ fn load_claim_proof() -> Option<LoadedProof> {
         prover: v.get("prover").and_then(|x| x.as_str()).unwrap_or("").to_string(),
         host_verify: v.get("host_verify").and_then(|x| x.as_bool()).unwrap_or(false),
     })
+}
+
+fn proof_wrong_recipient_msg(p: &LoadedProof) -> String {
+    let mut recp = p.recp;
+    recp[31] ^= 0xff;
+    let mut wire = Vec::with_capacity(168);
+    wire.extend_from_slice(&p.anchor);
+    wire.extend_from_slice(&p.nd);
+    wire.extend_from_slice(&p.v.to_le_bytes());
+    wire.extend_from_slice(&p.nf);
+    wire.extend_from_slice(&recp);
+    wire.extend_from_slice(&p.cmx);
+    let e = challenge_scalar_be(&keccak256(&wire));
+    serde_json::json!({
+        "process_headstash": {
+            "claims": [{
+                "i": {
+                    "anchor": STANDARD.encode(p.anchor),
+                    "nd": STANDARD.encode(p.nd),
+                    "v": p.v,
+                    "nf": STANDARD.encode(p.nf),
+                    "recp": STANDARD.encode(recp),
+                    "cmx": STANDARD.encode(p.cmx),
+                    "e": STANDARD.encode(e)
+                },
+                "p": STANDARD.encode(&p.proof),
+                "rr": STANDARD.encode(recp),
+                "root_id": 0
+            }]
+        }
+    })
+    .to_string()
 }
 
 fn proof_process_msg(p: &LoadedProof) -> String {
