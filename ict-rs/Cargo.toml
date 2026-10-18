@@ -309,3 +309,8 @@ required-features = ["docker", "terp", "testing"]
 name = "wasm_light_clients"
 path = "../examples/wasm_light_clients.rs"
 required-features = ["docker", "terp", "testing"]
+
+[[example]]
+name = "headstash_failure_modes"
+path = "examples/headstash_failure_modes.rs"
+required-features = ["docker", "testing", "terp"]

@@ -139,8 +139,23 @@ impl CosmosChain {
             );
             self.validators.push(node);
         }
-        for n in &mut self.validators {
+        for (i, n) in self.validators.iter_mut().enumerate() {
             n.extra_env = self.cfg.env.clone();
+            // Comma-separated per-validator sidecar URLs. Index i wins over a
+            // shared HASHMERCHANT_SIDECAR_URL. Headstash failure-mode e2e.
+            if let Ok(raw) = std::env::var("HASHMERCHANT_SIDECAR_URLS") {
+                let urls: Vec<&str> = raw
+                    .split(',')
+                    .map(str::trim)
+                    .filter(|s| !s.is_empty())
+                    .collect();
+                if let Some(url) = urls.get(i) {
+                    n.extra_env
+                        .retain(|(k, _)| k != "HASHMERCHANT_SIDECAR_URL");
+                    n.extra_env
+                        .push(("HASHMERCHANT_SIDECAR_URL".into(), (*url).to_string()));
+                }
+            }
         }
 
         // Create full nodes
