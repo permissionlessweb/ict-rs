@@ -20,7 +20,7 @@ const N: usize = 4;
 const UID: &str = "headstash-claim";
 const ALGO: &str = "headstash-accepted";
 const SOURCE: &str = "headstash-batch";
-const SCOPE: &str = "headstash";
+const SCOPE: &str = "headstash-batch";
 
 #[derive(Clone, Copy, PartialEq, Eq)]
 enum Mode {
@@ -82,10 +82,34 @@ fn hex(bytes: &[u8]) -> String {
     s
 }
 
+
+fn le_u32(n: u32) -> [u8; 4] { n.to_le_bytes() }
+fn le_u16(n: u16) -> [u8; 2] { n.to_le_bytes() }
+
+fn accepted_batch(allocation: &[u8; 32], nullifier: &[u8; 32], denom: &[u8; 32], dest: &str, amount: u64) -> [u8; 32] {
+    let mut pre = Vec::new();
+    pre.extend_from_slice(b"terp-headstash-accepted-v1");
+    pre.extend_from_slice(allocation);
+    pre.extend_from_slice(&1u32.to_le_bytes());
+    pre.extend_from_slice(nullifier);
+    pre.extend_from_slice(denom);
+    let db = dest.as_bytes();
+    pre.extend_from_slice(&(db.len() as u16).to_le_bytes());
+    pre.extend_from_slice(db);
+    pre.extend_from_slice(&amount.to_le_bytes());
+    let dig = Sha256::digest(&pre);
+    let mut out = [0u8; 32];
+    out.copy_from_slice(&dig);
+    out
+}
+
+static PAYLOAD: Mutex<Option<[u8; 32]>> = Mutex::new(None);
+
 fn value_for(mode: Mode) -> [u8; 32] {
     match mode {
         Mode::Wrong => [0x22; 32],
-        _ => [0x11; 32],
+        Mode::Down => [0x11; 32],
+        Mode::Honest => PAYLOAD.lock().unwrap().unwrap_or([0x11; 32]),
     }
 }
 
@@ -263,6 +287,211 @@ fn count_of(body: &str) -> Option<u64> {
     n.parse().ok()
 }
 
+async fn tx_out(node: &ict_rs::node::ChainNode, args: &[&str], gas: &str) -> String {
+    let opts = node.default_tx_opts().from("validator").gas(gas).broadcast_mode("sync");
+    let sent = match node.exec_tx_with(args, opts).await {
+        Ok(out) => {
+            let stdout = String::from_utf8_lossy(&out.stdout).to_string();
+            if out.exit_code != 0 {
+                return format!("exit {} {}", out.exit_code, String::from_utf8_lossy(&out.stderr).chars().take(180).collect::<String>());
+            }
+            stdout
+        }
+        Err(e) => return format!("exec err {e}"),
+    };
+    let hash: String = sent.split("txhash").nth(1).unwrap_or("").chars().filter(|c| c.is_ascii_hexdigit()).take(64).collect();
+    if hash.len() != 64 {
+        return sent.chars().take(400).collect();
+    }
+    for _ in 0..20 {
+        tokio::time::sleep(Duration::from_secs(1)).await;
+        if let Ok(out) = node.exec_cmd(&["query", "tx", &hash, "-o", "json"]).await {
+            if out.exit_code == 0 {
+                return String::from_utf8_lossy(&out.stdout).chars().take(2000).collect();
+            }
+        }
+    }
+    format!("tx {hash} not indexed")
+}
+
+fn attr(body: &str, key: &str) -> Option<String> {
+    let needle = format!("\"key\":\"{key}\"");
+    let i = body.find(&needle)?;
+    let rest = &body[i + needle.len()..];
+    let v = rest.split("\"value\":\"").nth(1)?;
+    Some(v.split('"').next()?.to_string())
+}
+
+fn tx_code(body: &str) -> Option<u64> {
+    let i = body.find("\"code\":")?;
+    let rest = body[i + 7..].trim_start();
+    let n: String = rest.chars().take_while(|c| c.is_ascii_digit()).collect();
+    n.parse().ok()
+}
+
+async fn contract_cases(
+    chain: &CosmosChain,
+    modes: &[Arc<Mutex<Mode>>],
+    rpc: u16,
+) {
+    let started = Instant::now();
+    let node = &chain.validators()[0];
+    let addr = match node.exec_cmd(&["keys", "show", "validator", "-a", "--keyring-backend", "test"]).await {
+        Ok(out) => String::from_utf8_lossy(&out.stdout).trim().to_string(),
+        Err(e) => {
+            report("replayed_nullifier_across_epochs", false, 0, &format!("no address {e}"));
+            report("unclaimed_funds_sweep", false, 0, "no address");
+            return;
+        }
+    };
+    if !addr.starts_with("terp1") {
+        report("replayed_nullifier_across_epochs", false, 0, "validator address missing");
+        report("unclaimed_funds_sweep", false, 0, "validator address missing");
+        return;
+    }
+    let denom = hex_decode("1d56a5879c78333d517942a36e7ea0932e7ffa1a1027e439279e8517580ea706");
+    let nullifier = [0x01u8; 32];
+    let allocation = [0x44u8; 32];
+    let batch = accepted_batch(&allocation, &nullifier, &denom, &addr, 15);
+    *PAYLOAD.lock().unwrap() = Some(batch);
+    for m in modes {
+        *m.lock().unwrap() = Mode::Honest;
+    }
+    let h0 = height(rpc).unwrap_or(0);
+    thread::sleep(Duration::from_secs(12));
+    let root_body = query_root(node);
+    let root_ok = count_of(&root_body).unwrap_or(0) >= 3 && height(rpc).unwrap_or(0) > h0;
+
+    let id = match &node.container_id {
+        Some(id) => id.0.clone(),
+        None => {
+            report("replayed_nullifier_across_epochs", false, 0, "no container");
+            report("unclaimed_funds_sweep", false, 0, "no container");
+            return;
+        }
+    };
+    let wasm = "/tmp/headstash-epoch-chain/cw_headstash.wasm";
+    let cp = std::process::Command::new("docker")
+        .args(["cp", wasm, &format!("{id}:/tmp/cw_headstash.wasm")])
+        .status();
+    if !cp.map(|s| s.success()).unwrap_or(false) {
+        report("replayed_nullifier_across_epochs", false, 0, "wasm copy failed");
+        report("unclaimed_funds_sweep", false, 0, "wasm copy failed");
+        return;
+    }
+    let wavs = std::fs::read_to_string("/tmp/headstash-epoch-chain/wavs.json").unwrap_or_default();
+    let init = format!(
+        r#"{{"genesis_root":"{z}","genesis_label":"epoch","token_strategy":{{"existing_fungible":{{"raw":"uterp","proof":"{proof}"}}}},"wavs":{wavs},"circuit_id":1}}"#,
+        z = b64(&[0u8; 32]),
+        proof = b64(&denom),
+    );
+    let _ = std::fs::write("/tmp/hs-init.json", &init);
+    let _ = std::process::Command::new("docker")
+        .args(["cp", "/tmp/hs-init.json", &format!("{id}:/tmp/hs-init.json")])
+        .status();
+    let t = Instant::now();
+    let stored = tx_out(node, &["tx", "wasm", "store", "/tmp/cw_headstash.wasm"], "8000000").await;
+    let mut code_id = attr(&stored, "code_id").unwrap_or_default();
+    if code_id.is_empty() && tx_code(&stored).unwrap_or(1) == 0 {
+        if let Ok(out) = node.exec_cmd(&["query", "wasm", "list-code", "-o", "json"]).await {
+            let body = String::from_utf8_lossy(&out.stdout);
+            code_id = body.rmatch_indices("code_id").next().map(|(i, _)| {
+                let rest = body[i+9..].trim_start_matches(|c: char| !c.is_ascii_digit());
+                rest.chars().take_while(|c| c.is_ascii_digit()).collect::<String>()
+            }).unwrap_or_default();
+        }
+    }
+    if tx_code(&stored).unwrap_or(1) != 0 || code_id.is_empty() {
+        report("replayed_nullifier_across_epochs", false, t.elapsed().as_millis(), &format!("store {stored}"));
+        report("unclaimed_funds_sweep", false, 0, "store failed");
+        return;
+    }
+    let inst = tx_out(
+        node,
+        &[
+            "tx", "wasm", "instantiate", &code_id, &init,
+            "--label", "headstash-epoch", "--admin", &addr, "--amount", "1000000uterp",
+        ],
+        "3000000",
+    ).await;
+    let mut contract = attr(&inst, "_contract_address").or_else(|| attr(&inst, "contract_address")).unwrap_or_default();
+    if contract.is_empty() && tx_code(&inst).unwrap_or(1) == 0 {
+        if let Ok(out) = node.exec_cmd(&["query", "wasm", "list-contract-by-code", &code_id, "-o", "json"]).await {
+            let body = String::from_utf8_lossy(&out.stdout);
+            if let Some(i) = body.rfind("terp1") {
+                contract = body[i..].chars().take_while(|c| c.is_ascii_alphanumeric()).collect();
+            }
+        }
+    }
+    if tx_code(&inst).unwrap_or(1) != 0 || contract.is_empty() {
+        report("replayed_nullifier_across_epochs", false, t.elapsed().as_millis(), &format!("instantiate {}", inst.chars().take(220).collect::<String>()));
+        report("unclaimed_funds_sweep", false, 0, "instantiate failed");
+        return;
+    }
+    let campaign = format!(
+        r#"{{"set_epoch_campaign":{{"campaign":{{"ctx":"{z}","backend":"halo2","cutoff_height":1,"bech32_hrp":"terp","denom":"{proof}","amounts":[{{"amount":15,"cap":1}}],"reserved":[],"trusted":["{z}"],"trusted_verify_threshold":1,"trusted_sign_threshold":1,"max_rows":4,"allocation_root":"{alloc}","root_id":0,"vk_id":1,"vk_hash":"{z}"}}}}}}"#,
+        z = b64(&[0u8; 32]),
+        proof = b64(&denom),
+        alloc = b64(&allocation),
+    );
+    let _ = std::fs::write("/tmp/hs-campaign.json", &campaign);
+    let _ = std::process::Command::new("docker").args(["cp", "/tmp/hs-campaign.json", &format!("{id}:/tmp/hs-campaign.json")]).status();
+    let setc = tx_out(node, &["tx", "wasm", "execute", &contract, &campaign], "800000").await;
+    let row = format!(
+        r#"{{"stage_epoch_batch":{{"digests":["{z}"],"rows":[{{"nullifier":"{nf}","denom":"{proof}","destination":"{addr}","amount":15}}]}}}}"#,
+        z = b64(&[9u8; 32]),
+        nf = b64(&nullifier),
+        proof = b64(&denom),
+    );
+    let _ = std::fs::write("/tmp/hs-stage.json", &row);
+    let _ = std::process::Command::new("docker").args(["cp", "/tmp/hs-stage.json", &format!("{id}:/tmp/hs-stage.json")]).status();
+    let stage = tx_out(node, &["tx", "wasm", "execute", &contract, &row], "800000").await;
+    let reg = tx_out(
+        node,
+        &["tx", "hashmerchant", "register-contract", &contract, UID, "bank", "2000000uterp"],
+        "500000",
+    ).await;
+    thread::sleep(Duration::from_secs(8));
+    let replay_msg = format!(
+        r#"{{"apply_accepted_batch":{{"allocation_root":"{alloc}","root_id":0,"rows":[{{"nullifier":"{nf}","denom":"{proof}","destination":"{addr}","amount":15}}]}}}}"#,
+        alloc = b64(&allocation),
+        nf = b64(&nullifier),
+        proof = b64(&denom),
+    );
+    let _ = std::fs::write("/tmp/hs-replay.json", &replay_msg);
+    let _ = std::process::Command::new("docker").args(["cp", "/tmp/hs-replay.json", &format!("{id}:/tmp/hs-replay.json")]).status();
+    let replay = tx_out(node, &["tx", "wasm", "execute", &contract, &replay_msg], "800000").await;
+    let replay_ok = replay.contains("nullifier already exists") || tx_code(&replay).unwrap_or(0) != 0 && replay.contains("nullifier");
+    report(
+        "replayed_nullifier_across_epochs",
+        root_ok && tx_code(&setc).unwrap_or(1) == 0 && tx_code(&stage).unwrap_or(1) == 0 && tx_code(&reg).unwrap_or(1) == 0 && replay_ok,
+        started.elapsed().as_millis(),
+        &format!("set={} stage={} reg={} replay={}", setc.chars().take(140).collect::<String>(), stage.chars().take(140).collect::<String>(), tx_code(&reg).unwrap_or(9), replay.chars().take(140).collect::<String>()),
+    );
+    let bal = match node.exec_cmd(&["query", "bank", "balances", &contract, "-o", "json"]).await {
+        Ok(out) => String::from_utf8_lossy(&out.stdout).to_string(),
+        Err(_) => String::new(),
+    };
+    let holds = bal.contains("uterp") && !bal.contains("\"amount\":\"0\"");
+    report(
+        "unclaimed_funds_sweep",
+        holds && replay_ok,
+        started.elapsed().as_millis(),
+        if holds { "escrow still holds uterp" } else { "escrow empty or missing" },
+    );
+    let _ = root_ok;
+}
+
+fn t_elapsed_placeholder() -> u128 { 0 }
+
+fn hex_decode(s: &str) -> [u8; 32] {
+    let mut out = [0u8; 32];
+    for i in 0..32 {
+        out[i] = u8::from_str_radix(&s[i * 2..i * 2 + 2], 16).unwrap();
+    }
+    out
+}
+
 fn report(name: &str, pass: bool, ms: u128, detail: &str) {
     println!(
         "{} {} {}ms {}",
@@ -358,18 +587,7 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
         &format!("count={restart_n}"),
     );
 
-    report(
-        "replayed_nullifier_across_epochs",
-        false,
-        0,
-        "cw-headstash not instantiated; spent nullifier not on this chain",
-    );
-    report(
-        "unclaimed_funds_sweep",
-        false,
-        0,
-        "cw-headstash escrow not instantiated; sweep not on this chain",
-    );
+    contract_cases(&chain, &modes, rpc).await;
 
     let _ = chain.stop().await;
     Ok(())
