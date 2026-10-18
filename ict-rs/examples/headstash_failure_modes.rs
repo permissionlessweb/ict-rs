@@ -143,6 +143,13 @@ fn vote_json(mode: Mode) -> String {
     )
 }
 
+fn oracle_pubkey_b64() -> String {
+    if let Ok(hexpub) = std::env::var("HEADSTASH_CUSTODY_PUB_HEX") {
+        return b64(&hex_decode(hexpub.trim()));
+    }
+    b64(&signing_key().verifying_key().to_bytes())
+}
+
 fn honest_root() -> String {
     hex(&aggregate(&value_for(Mode::Honest)))
 }
@@ -182,7 +189,7 @@ fn modify_genesis(_cfg: &ChainConfig, raw: Vec<u8>) -> IctResult<Vec<u8>> {
     if let Some(abci) = genesis.pointer_mut("/consensus/params/abci") {
         abci["vote_extensions_enable_height"] = serde_json::json!("1");
     }
-    let pk = b64(&signing_key().verifying_key().to_bytes());
+    let pk = oracle_pubkey_b64();
     if let Some(hm) = genesis.pointer_mut("/app_state/hashmerchant") {
         hm["registered_chains"] = serde_json::json!([{
             "chain_uid": UID,
@@ -505,17 +512,26 @@ fn report(name: &str, pass: bool, ms: u128, detail: &str) {
 #[tokio::main]
 async fn main() -> Result<(), Box<dyn std::error::Error>> {
     std::env::set_var("ICT_PUBLISH_HOST", "127.0.0.1");
+    let external = std::env::var("HEADSTASH_EXTERNAL").ok().as_deref() == Some("1");
     let modes: Vec<Arc<Mutex<Mode>>> = (0..N).map(|_| Arc::new(Mutex::new(Mode::Honest))).collect();
-    for i in 0..N {
-        let mode = modes[i].clone();
-        let port = 18421 + i as u16;
-        thread::spawn(move || serve(port, mode));
+    if external {
+        if std::env::var("HASHMERCHANT_SIDECAR_URLS").is_err()
+            || std::env::var("HEADSTASH_CUSTODY_PUB_HEX").is_err()
+        {
+            return Err("external sidecars need urls and a custody pubkey".into());
+        }
+    } else {
+        for i in 0..N {
+            let mode = modes[i].clone();
+            let port = 18421 + i as u16;
+            thread::spawn(move || serve(port, mode));
+        }
+        let urls = (0..N)
+            .map(|i| format!("http://host.docker.internal:{}", 18421 + i))
+            .collect::<Vec<_>>()
+            .join(",");
+        std::env::set_var("HASHMERCHANT_SIDECAR_URLS", &urls);
     }
-    let urls = (0..N)
-        .map(|i| format!("http://host.docker.internal:{}", 18421 + i))
-        .collect::<Vec<_>>()
-        .join(",");
-    std::env::set_var("HASHMERCHANT_SIDECAR_URLS", &urls);
 
     let runtime = IctRuntime::Docker(DockerConfig::default()).into_backend().await?;
     let mut chain = CosmosChain::new(chain_config(), N, 0, runtime);
@@ -530,6 +546,32 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
     println!("chain_up rpc=127.0.0.1:{rpc} boot_ms={}", boot.elapsed().as_millis());
     let h = wait_height(rpc, 8, 180)?;
     println!("height {h}");
+    if external {
+        let node = &chain.validators()[0];
+        let id = node
+            .container_id
+            .as_ref()
+            .map(|c| c.0.clone())
+            .unwrap_or_default();
+        let body = format!("rpc={rpc}\ncontainer={id}\nhome={}\n", node.home_dir);
+        let path = std::env::var("HEADSTASH_CHAIN_FILE")
+            .unwrap_or_else(|_| "/tmp/headstash-fm-halo2/chain.env".into());
+        if let Some(parent) = std::path::Path::new(&path).parent() {
+            let _ = std::fs::create_dir_all(parent);
+        }
+        std::fs::write(&path, &body)?;
+        println!("chain_ready");
+        let stop = std::env::var("HEADSTASH_STOP_FILE")
+            .unwrap_or_else(|_| "/tmp/headstash-fm-halo2/stop".into());
+        loop {
+            if std::path::Path::new(&stop).exists() {
+                break;
+            }
+            tokio::time::sleep(Duration::from_secs(2)).await;
+        }
+        let _ = chain.stop().await;
+        return Ok(());
+    }
     let t = Instant::now();
     let base = query_root(&chain.validators()[0]);
     let base_n = count_of(&base).unwrap_or(0);
