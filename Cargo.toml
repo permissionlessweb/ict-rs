@@ -1,5 +1,11 @@
 [workspace]
-members = ["ict-rs", "ict-rs-codegen", "ict-rs-cw-orch", "ict-rs-derive", "pir-live-chain"]
+members = [
+    "ict-rs",
+    "ict-rs-codegen",
+    "ict-rs-cw-orch",
+    "ict-rs-derive",
+    "pir-live-chain",
+]
 resolver = "2"
 
 [workspace.package]
@@ -10,16 +16,28 @@ rust-version = "1.88"
 # rayon 1.12 ParallelIterator is not Iterator; halo2 TheBestReduce needs 1.10.2
 [workspace.dependencies]
 rayon = "=1.10.0"
+[patch.crates-io]
 
-[patch."https://github.com/permissionlessweb/cw-orchestrator"]
+cosmwasm-std = { path = "../cosmwasm/packages/std" }
+cosmwasm-schema = { path = "../cosmwasm/packages/schema" }
+cw-storage-plus = { path = "../cw-storage-plus" }
+cosmrs = { path = "../cosmos-rust/cosmrs" }
 cw-orch = { path = "../cw-orchestrator/cw-orch" }
 cw-orch-core = { path = "../cw-orchestrator/packages/cw-orch-core" }
 cw-orch-daemon = { path = "../cw-orchestrator/cw-orch-daemon" }
 cw-orch-traits = { path = "../cw-orchestrator/packages/cw-orch-traits" }
-cw-orch-mock = { path = "../cw-orchestrator/packages/cw-orch-mock" }
-cw-orch-networks = { path = "../cw-orchestrator/packages/cw-orch-networks" }
+ics23 = { path = "../ics23/rust" }
+tendermint = { path = "../tendermint-rs/tendermint" }
+tendermint-rpc = { path = "../tendermint-rs/rpc" }
+zk-cosmwasm = { path = "../cosmwasm/packages/zk" }
 
-[patch.crates-io]
-cosmwasm-std = { path = "../cosmwasm/packages/std" }
-cosmwasm-schema = { path = "../cosmwasm/packages/schema" }
-cw-storage-plus = { path = "../cw-storage-plus" }
+abstract-cw-multi-test = { path = "../cw-multi-test-fork" }
+cosmos-sdk-proto = { path = "../cosmos-rust/cosmos-sdk-proto" }
+cw-utils = { path = "../cw-minus/packages/cw-utils" }
+tendermint-proto = { path = "../tendermint-rs/proto" }
+informalsystems-pbjson = { path = "../pbjson/pbjson" }
+cw20-ics20 = { path = "../cw-plus/contracts/cw20-ics20" }
+cw2 = { path = "../cw-minus/packages/cw2" }
+cw-controllers = { path = "../cw-minus/packages/controllers" }
+ibc-proto = { path = "../ibc-proto-rs" }
+cw-ownable = { path = "../cw-plus-plus/packages/ownable" }

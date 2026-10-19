@@ -17,24 +17,27 @@ svg-mint-product = []
 hashmarket = ["dep:hash-market"]
 
 [dependencies]
-cw-orch-core = { git = "https://github.com/permissionlessweb/cw-orchestrator", rev = "ec4d693aad80ee70ddbd77c3b78c9807bedb6be0", default-features = false, features = ["terp"] }
-cw-orch-daemon = { git = "https://github.com/permissionlessweb/cw-orchestrator", rev = "ec4d693aad80ee70ddbd77c3b78c9807bedb6be0" }
-ict-rs = { path = "../ict-rs", features = ["docker", "terp", "testing"] }
+cw-orch = { version = "0.30.0", default-features = false, features = ["daemon"] }
+cw-orch-core = { version = "2.1.4", default-features = false, features = ["terp"] }
+cw-orch-daemon = { version = "0.29.0" }
+cw-orch-traits = { version = "0.25.0" }
+dregg = { path = "../../terp-rs/tools/svg-mint/crates/dregg" }
 halo2_proofs = { package = "zakura-halo2-proofs", path = "../../zakura-common/crates/halo2_proofs", default-features = false, features = ["batch", "multicore"] }
 hash-market = { path = "../../terp-rs/tools/hash-market", optional = true, default-features = false, features = ["onboard"] }
-dregg = { path = "../../terp-rs/tools/svg-mint/crates/dregg" }
+ict-rs = { path = "../ict-rs", features = ["docker", "terp", "testing"] }
 o-line-sdl = { path = "../../o-line", features = ["interface", "testing"], optional = true }
+prost = "0.14.1"
+prost-types = "0.14.1"
+rustls = { version = "0.23", default-features = false, features = ["ring", "std"] }
+serde_json = "1"
+sha2 = "0.10"
 thiserror = "2"
 tokio = { version = "1", features = ["rt", "rt-multi-thread", "macros"] }
 tracing = "0.1"
 tracing-subscriber = { version = "0.3", features = ["env-filter"] }
-serde_json = "1"
-sha2 = "0.10"
-rustls = { version = "0.23", default-features = false, features = ["ring", "std"] }
-cw-orch = { git = "https://github.com/permissionlessweb/cw-orchestrator", rev = "ec4d693aad80ee70ddbd77c3b78c9807bedb6be0", default-features = false, features = ["daemon"] }
-cw-orch-traits = { git = "https://github.com/permissionlessweb/cw-orchestrator", rev = "ec4d693aad80ee70ddbd77c3b78c9807bedb6be0" }
-prost = "0.14.1"
-prost-types = "0.14.1"
+
+[dev-dependencies]
+wat = "1"
 
 [[example]]
 name = "lean_production_e2e"
@@ -51,7 +54,15 @@ required-features = ["docker"]
 [[example]]
 name = "svg_mint_local_prod"
 path = "../../terp-rs/tools/svg-mint/e2e/examples/svg_mint_local_prod.rs"
-required-features = ["docker", "zakura", "dregg-node", "ethereum", "bitcoin", "svg-mint-product", "hashmarket"]
+required-features = [
+    "docker",
+    "zakura",
+    "dregg-node",
+    "ethereum",
+    "bitcoin",
+    "svg-mint-product",
+    "hashmarket",
+]
 
 [[example]]
 name = "svg_mint_load_storm"
@@ -90,7 +101,10 @@ required-features = ["docker"]
 name = "itl_frost_local_prod"
 required-features = ["docker"]
 
-
 [[example]]
 name = "svg_shitstrap_callbacks_e2e"
+required-features = ["docker"]
+
+[[example]]
+name = "hash_bench"
 required-features = ["docker"]

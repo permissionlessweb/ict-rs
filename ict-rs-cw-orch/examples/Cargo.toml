@@ -11,8 +11,12 @@ oline = ["dep:o-line-sdl"]
 docker = []
 
 [dependencies]
-cw-orch-core = { git = "https://github.com/permissionlessweb/cw-orchestrator", rev = "ec4d693aad80ee70ddbd77c3b78c9807bedb6be0", default-features = false, features = ["terp"] }
-cw-orch-daemon = { git = "https://github.com/permissionlessweb/cw-orchestrator", rev = "ec4d693aad80ee70ddbd77c3b78c9807bedb6be0" }
+cw-orch-core = { version = "2.1.4", default-features = false, features = ["terp"] }
+cw-orch-daemon = { version = "0.29.0" }
+
+[patch.crates-io]
+cw-orch-core = { path = "../../../cw-orchestrator/packages/cw-orch-core" }
+cw-orch-daemon = { path = "../../../cw-orchestrator/cw-orch-daemon" }
 ict-rs = { path = "../ict-rs", features = ["docker", "terp", "testing"] }
 o-line-sdl = { path = "../../o-line", features = ["interface", "testing"], optional = true }
 thiserror = "2"

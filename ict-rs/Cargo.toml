@@ -5,6 +5,10 @@ edition.workspace = true
 rust-version.workspace = true
 description = "Rust re-implementation of the Interchain Test framework"
 
+[[bin]]
+name = "ict-ci"
+path = "src/bin/ict-ci.rs"
+
 [features]
 default = ["full"]
 full = ["docker", "ethereum", "testing", "terp", "akash"]
@@ -40,48 +44,48 @@ dregg-node = ["docker"]
 bitcoin = ["docker"]
 
 [dependencies]
+anyhow = "1"
 async-trait = "0.1"
 base64 = "0.22"
-futures = "0.3"
-tokio = { version = "1", features = ["full"] }
-bollard = { version = "0.18", optional = true }
-# For Nostr NIP-01 WS client (local relay testing)
-tokio-tungstenite = { version = "0.21", features = ["connect"], optional = true }
-futures-util = { version = "0.3", features = ["sink"], optional = true }
-cosmrs = { path = "../../cosmos-rust/cosmrs", package = "cosmrs", features = ["cosmwasm", "grpc"] }
-log = "0.4.22"
-prost = "0.14"
-ics23 = { path = "../../ics23/rust", package = "ics23", default-features = false, features = ["std", "host-functions"] }
-tendermint = { path = "../../tendermint-rs/tendermint", package = "tendermint" }
-tendermint-rpc = { path = "../../tendermint-rs/rpc", package = "tendermint-rpc", features = ["http-client", "websocket-client"] }
-tonic = { version = "0.14", optional = true }
-serde = { version = "1", features = ["derive"] }
-serde_json = "1"
-anyhow = "1"
-thiserror = "2"
 bip32 = "0.5"
 bip39 = { version = "2", features = ["default"] }
+bollard = { version = "0.18", optional = true }
+cosmrs = { package = "cosmrs", version = "0.23.0", features = ["cosmwasm", "grpc"] }
+futures = "0.3"
+futures-util = { version = "0.3", features = ["sink"], optional = true }
+ics23 = { package = "ics23", version = "0.12.0", default-features = false, features = ["host-functions", "std"] }
 k256 = { version = "0.13", features = ["ecdsa"] }
+log = "0.4.22"
+prost = "0.14"
 ripemd = "0.1"
+serde = { version = "1", features = ["derive"] }
+serde_json = "1"
 sha2 = "0.10"
 sha3 = { version = "0.10", optional = true }
+tendermint = { package = "tendermint", version = "0.40.4" }
+tendermint-rpc = { package = "tendermint-rpc", version = "0.40.4", features = ["http-client", "websocket-client"] }
+thiserror = "2"
+tokio = { version = "1", features = ["full"] }
+# For Nostr NIP-01 WS client (local relay testing)
+tokio-tungstenite = { version = "0.21", features = ["connect"], optional = true }
+tonic = { version = "0.14", optional = true }
 
 # Utilities
-tempfile = "3"
 bech32 = "0.11"
-hex = "0.4"
-ed25519-dalek = { version = "2.1", features = ["rand_core"] }
+cosmwasm-std = { version = "=4.0.0-zk", optional = true }
 cw-headstash = { path = "../../headstash/contracts/cw-headstash", optional = true, default-features = false, features = ["interface"] }
-cosmwasm-std = { path = "../../cosmwasm/packages/std", optional = true }
+ed25519-dalek = { version = "2.1", features = ["rand_core"] }
+hex = "0.4"
 rand = "0.8"
+tempfile = "3"
 toml = "0.8"
 tracing = "0.1"
 
 # Derive macros
-cw-orch-core = { git = "https://github.com/permissionlessweb/cw-orchestrator", rev = "ec4d693aad80ee70ddbd77c3b78c9807bedb6be0", features = ["terp"] }
+cw-orch-core = { version = "2.1.4", features = ["terp"] }
+ict-rs-derive = { path = "../ict-rs-derive" }
 # Force halo2-compatible rayon when a sibling crate enables zk
 rayon = "=1.10.0"
-ict-rs-derive = { path = "../ict-rs-derive" }
 
 [dev-dependencies]
 anyhow = "1"
@@ -96,10 +100,10 @@ sha2 = "0.10"
 tar = "0.4"
 tempfile = { version = "3", optional = false }
 terp-rs = { path = "../../terp-rs/crates/sdk", package = "terp-rs", features = ["rpc"] }
-zk-cosmwasm = { path = "../../cosmwasm/packages/zk", default-features = false }
 tokio = { version = "1", features = ["full"] }
 tokio-test = "0.4"
 tracing-subscriber = { version = "0.3", features = ["env-filter"] }
+zk-cosmwasm = { version = "=4.0.0-zk", default-features = false }
 
 [[bench]]
 name = "crypto_bench"
@@ -270,10 +274,6 @@ required-features = ["docker", "nostr"]
 name = "trustless_builder"
 path = "../examples/trustless_builder.rs"
 required-features = ["docker", "ethereum"]
-
-[[bin]]
-name = "ict-ci"
-path = "src/bin/ict-ci.rs"
 
 [[example]]
 name = "lean_terpz"
