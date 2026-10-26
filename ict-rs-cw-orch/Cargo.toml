@@ -22,7 +22,7 @@ cw-orch-core = { version = "2.1.4", default-features = false, features = ["terp"
 cw-orch-daemon = { version = "0.29.0" }
 cw-orch-traits = { version = "0.25.0" }
 dregg = { path = "../../terp-rs/tools/svg-mint/crates/dregg" }
-halo2_proofs = { package = "zakura-halo2-proofs", path = "../../zakura-common/crates/halo2_proofs", default-features = false, features = ["batch", "multicore"] }
+halo2_proofs = { package = "zakura-halo2-proofs", version = "=1.3.0-alpha.1", default-features = false, features = ["batch", "multicore"] }
 hash-market = { path = "../../terp-rs/tools/hash-market", optional = true, default-features = false, features = ["onboard"] }
 ict-rs = { path = "../ict-rs", features = ["docker", "terp", "testing"] }
 o-line-sdl = { path = "../../o-line", features = ["interface", "testing"], optional = true }

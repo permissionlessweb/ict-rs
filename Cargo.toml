@@ -18,25 +18,36 @@ rust-version = "1.88"
 rayon = "=1.10.0"
 [patch.crates-io]
 
-ics23 = { git = "https://github.com/permissionlessweb/ics23", rev = "a60a82d843d94f90a154ad2df390e1515546492e" }
-zk-cosmwasm = { git = "https://github.com/permissionlessweb/cosmwasm", rev = "63ac6cb94311daccf73ce658e8c2f6b4dcade3a0" }
-ibc-proto = { git = "https://github.com/permissionlessweb/ibc-proto-rs", rev = "6bb6236eef08c56b4c0490ed564864936b412151" }
-cw-storage-plus = { git = "https://github.com/permissionlessweb/cw-storage-plus", rev = "b303f445113c95427b57fc825bc033fdf3e6fee0" }
-cosmrs = { git = "https://github.com/permissionlessweb/cosmos-rust", rev = "877ee79b693760f7ffa97ef542f5788c26f537dd" }
-cw-orch = { git = "https://github.com/permissionlessweb/cw-orchestrator", rev = "99f8a568fe733735579b891c1dc47c97e4c8960d" }
-cw-orch-core = { git = "https://github.com/permissionlessweb/cw-orchestrator", rev = "99f8a568fe733735579b891c1dc47c97e4c8960d" }
-cw-orch-daemon = { git = "https://github.com/permissionlessweb/cw-orchestrator", rev = "99f8a568fe733735579b891c1dc47c97e4c8960d" }
-cw-orch-traits = { git = "https://github.com/permissionlessweb/cw-orchestrator", rev = "99f8a568fe733735579b891c1dc47c97e4c8960d" }
-tendermint = { git = "https://github.com/permissionlessweb/tendermint-rs", rev = "c732393410cefadb53da98836a7620ef1a1ef8bb" }
-tendermint-rpc = { git = "https://github.com/permissionlessweb/tendermint-rs", rev = "c732393410cefadb53da98836a7620ef1a1ef8bb" }
-abstract-cw-multi-test = { git = "https://github.com/permissionlessweb/cw-multi-test-fork", rev = "2eb14e1f0b66caed897a3c4a69a4c57282b565c0" }
-cosmos-sdk-proto = { git = "https://github.com/permissionlessweb/cosmos-rust", rev = "877ee79b693760f7ffa97ef542f5788c26f537dd" }
-cw-utils = { git = "https://github.com/permissionlessweb/cw-minus", rev = "14194672e846a56e5a37a4a3b449e375f6f2b496" }
-tendermint-proto = { git = "https://github.com/permissionlessweb/tendermint-rs", rev = "c732393410cefadb53da98836a7620ef1a1ef8bb" }
-cw20-ics20 = { git = "https://github.com/permissionlessweb/cw-plus", rev = "f66883649c08d2671cc7d66cdf4f7f6abec4e44d" }
-cw2 = { git = "https://github.com/permissionlessweb/cw-minus", rev = "14194672e846a56e5a37a4a3b449e375f6f2b496" }
-cw-controllers = { git = "https://github.com/permissionlessweb/cw-minus", rev = "14194672e846a56e5a37a4a3b449e375f6f2b496" }
-cw-ownable = { git = "https://github.com/permissionlessweb/cw-plus-plus", rev = "2fa6fe3fdf5f0c929a0e3b504320ead4a0553c05" }
-cosmwasm-std = { git = "https://github.com/permissionlessweb/cosmwasm", rev = "63ac6cb94311daccf73ce658e8c2f6b4dcade3a0" }
-cosmwasm-schema = { git = "https://github.com/permissionlessweb/cosmwasm", rev = "63ac6cb94311daccf73ce658e8c2f6b4dcade3a0" }
-informalsystems-pbjson = { git = "https://github.com/permissionlessweb/pbjson", rev = "df9ae64ffc106affccdfec2437365f8498ef306d" }
+ics23 = { path = "../ics23/rust" }
+zk-cosmwasm = { path = "../cosmwasm/packages/zk" }
+ibc-proto = { path = "../ibc-proto-rs" }
+cw-storage-plus = { path = "../cw-storage-plus" }
+cosmrs = { path = "../cosmos-rust/cosmrs" }
+cw-orch = { path = "../cw-orchestrator/cw-orch" }
+cw-orch-core = { path = "../cw-orchestrator/packages/cw-orch-core" }
+cw-orch-daemon = { path = "../cw-orchestrator/cw-orch-daemon" }
+cw-orch-traits = { path = "../cw-orchestrator/packages/cw-orch-traits" }
+tendermint = { path = "../tendermint-rs/tendermint" }
+tendermint-rpc = { path = "../tendermint-rs/rpc" }
+abstract-cw-multi-test = { path = "../cw-multi-test-fork" }
+cosmos-sdk-proto = { path = "../cosmos-rust/cosmos-sdk-proto" }
+cw-utils = { path = "../cw-minus/packages/cw-utils" }
+tendermint-proto = { path = "../tendermint-rs/proto" }
+cw20-ics20 = { path = "../cw-plus/contracts/cw20-ics20" }
+cw2 = { path = "../cw-minus/packages/cw2" }
+cw-controllers = { path = "../cw-minus/packages/controllers" }
+cw-ownable = { path = "../cw-plus-plus/packages/ownable" }
+cosmwasm-std = { path = "../cosmwasm/packages/std" }
+cosmwasm-schema = { path = "../cosmwasm/packages/schema" }
+informalsystems-pbjson = { path = "../pbjson/pbjson" }
+
+
+zakura-halo2-proofs = { path = "../zakura-common/crates/halo2_proofs" }
+cosmwasm-vm = { path = "../cosmwasm/packages/vm" }
+zakura-orchard = { path = "../zakura-common/crates/orchard" }
+zakura-pasta-curves = { path = "../zakura-common/crates/pasta_curves" }
+zakura-halo2-gadgets = { path = "../zakura-common/crates/halo2_gadgets" }
+zakura-halo2-poseidon = { path = "../zakura-common/crates/halo2_poseidon" }
+zakura-reddsa = { path = "../zakura-common/crates/reddsa" }
+akash-deploy-rs = { path = "../akash-deploy-rs" }
+layer-climb-address = { path = "../climb/packages/layer-climb-address" }
