@@ -42,7 +42,7 @@ pub struct NostrRelayerManager {
 
 impl NostrRelayerManager {
     /// Default Nostr relay port inside the container.
-    pub const DEFAULT_RELAY_PORT: u16 = 7777;
+    pub const DEFAULT_RELAY_PORT: u16 = 7447; // mattn/nostr-relay listens on :7447
 
     /// Create a new manager. Does **not** start the container — call [`start`] for that.
     ///
