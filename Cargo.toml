@@ -31,12 +31,12 @@ cw-orch = { version = "0.30.0", default-features = false }
 cw-orch-core = { version = "2.1.4", default-features = false }
 cw-orch-daemon = "0.29.0"
 cw-orch-traits = "0.25.0"
-dregg = { path = "../terp-rs/tools/svg-mint/crates/dregg" }
+dregg = { git = "https://github.com/permissionlessweb/terp-rs", rev = "3628599977e6b21bfd931f3a50e5ac5ad6a451d9" }
 ed25519-dalek = "2.1"
 futures = "0.3"
 futures-util = "0.3"
 halo2_proofs = { package = "zakura-halo2-proofs", version = "=5.0.0-rc.3", default-features = false }
-hash-market = { path = "../terp-rs/tools/hash-market", default-features = false }
+hash-market = { git = "https://github.com/permissionlessweb/terp-rs", rev = "3628599977e6b21bfd931f3a50e5ac5ad6a451d9", default-features = false }
 heck = "0.5"
 hex = "0.4"
 ics23 = { package = "ics23", version = "0.12.0", default-features = false }
@@ -65,7 +65,7 @@ tar = "0.4"
 tempfile = "3"
 tendermint = { package = "tendermint", version = "0.40.4" }
 tendermint-rpc = { package = "tendermint-rpc", version = "0.40.4" }
-terp-rs = { package = "terp-rs", path = "../terp-rs/crates/sdk" }
+terp-rs = { package = "terp-rs", git = "https://github.com/permissionlessweb/terp-rs", rev = "3628599977e6b21bfd931f3a50e5ac5ad6a451d9" }
 thiserror = "2"
 tokio = "1"
 tokio-test = "0.4"
